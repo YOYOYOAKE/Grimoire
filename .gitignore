@@ -1,0 +1,24 @@
+# Build artifacts
+/bin/
+*.out
+*.test
+
+# Coverage
+.coverprofile
+coverage.out
+
+# Runtime data
+/data/
+
+# Local secrets/config
+/configs/config.yaml
+
+# Logs
+*.log
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

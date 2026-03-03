@@ -1,0 +1,33 @@
+telegram:
+  bot_token: ""
+  admin_user_id: 123456789
+  proxy_url: ""
+
+llm:
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "gpt-4o-mini"
+  timeout_sec: 30
+
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: ""
+  model: "nai-diffusion-4-5-full"
+  poll_interval_sec: 5
+
+generation:
+  shape_default: "square"
+  artist: ""
+  shape_map:
+    square: "1024x1024"
+    landscape: "1216x832"
+    portrait: "832x1216"
+  steps: 28
+  scale: 5
+  sampler: "k_euler"
+  n_samples: 1
+
+runtime:
+  worker_concurrency: 1
+  save_dir: "./data/images"
+  sqlite_path: "./data/grimoire.db"
