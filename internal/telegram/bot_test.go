@@ -227,6 +227,32 @@ func TestBuildTaskActionMarkupForFailedStatus(t *testing.T) {
 	}
 }
 
+func TestBuildTaskActionMarkupForProcessingShowsStop(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, _, _ := newTestBot(t)
+	bot.rememberRetryTask(types.DrawTask{
+		TaskID: "task-000301",
+		Prompt: "test prompt",
+		Shape:  "square",
+	})
+
+	markup := bot.buildTaskActionMarkup(context.Background(), 1001, 0, "任务 task-000301\n状态: processing\n阶段: 提示词翻译")
+	if markup == nil {
+		t.Fatalf("expected stop markup")
+	}
+	if len(markup.InlineKeyboard) != 1 || len(markup.InlineKeyboard[0]) != 1 {
+		t.Fatalf("unexpected keyboard layout: %+v", markup.InlineKeyboard)
+	}
+	btn := markup.InlineKeyboard[0][0]
+	if btn.Text != "停止生成" {
+		t.Fatalf("unexpected button text: %s", btn.Text)
+	}
+	if btn.CallbackData != "stop:task-000301" {
+		t.Fatalf("unexpected callback data: %s", btn.CallbackData)
+	}
+}
+
 func TestBuildTaskActionMarkupForCompletedWithGalleryPaging(t *testing.T) {
 	t.Parallel()
 
@@ -325,6 +351,35 @@ func TestLegacyRetryCallbackStillWorks(t *testing.T) {
 	}
 	if tasks[0].Prompt != "legacy retry" {
 		t.Fatalf("unexpected prompt: %q", tasks[0].Prompt)
+	}
+}
+
+func TestStopCallbackCancelsTask(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, transport, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+	ctrl := &mockTaskController{}
+	bot.SetTaskController(ctrl)
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "stop-cb-1",
+		From: User{ID: adminID},
+		Message: &Message{
+			MessageID: 399,
+			Chat:      Chat{ID: 1001},
+		},
+		Data: "stop:task-000399",
+	})
+
+	if !ctrl.called {
+		t.Fatalf("expected cancel controller called")
+	}
+	if ctrl.taskID != "task-000399" {
+		t.Fatalf("unexpected canceled task id: %s", ctrl.taskID)
+	}
+	if body := transport.LastBody("/editMessageText"); body == "" || !strings.Contains(body, "cancelling") {
+		t.Fatalf("expected cancelling editMessageText payload, body=%s", body)
 	}
 }
 
@@ -624,6 +679,17 @@ type mockQueue struct {
 	mu    sync.Mutex
 	tasks []types.DrawTask
 	seq   int
+}
+
+type mockTaskController struct {
+	called bool
+	taskID string
+}
+
+func (m *mockTaskController) CancelTask(taskID string) bool {
+	m.called = true
+	m.taskID = taskID
+	return true
 }
 
 func (q *mockQueue) Enqueue(task types.DrawTask) (string, int) {

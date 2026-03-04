@@ -32,6 +32,7 @@ const (
 	cbSetImageSize  = "menu:set_image_size"
 	cbBackMain      = "menu:back_main"
 	cbSizePrefix    = "size:"
+	cbStopPrefix    = "stop:"
 	cbRegenPrefix   = "regen:"
 	cbGalleryPrev   = "gallery_prev:"
 	cbGalleryNext   = "gallery_next:"
@@ -52,10 +53,15 @@ type TaskQueue interface {
 	Stats() types.QueueStats
 }
 
+type TaskController interface {
+	CancelTask(taskID string) bool
+}
+
 type Bot struct {
 	cfg          *config.Manager
 	queue        TaskQueue
 	taskStore    store.TaskStore
+	taskControl  TaskController
 	logger       *slog.Logger
 	httpClient   *http.Client
 	updateOffset int64
@@ -78,6 +84,10 @@ func NewBot(cfg *config.Manager, queue TaskQueue, taskStore store.TaskStore, log
 		pendingInput: make(map[int64]PendingAction),
 		retryTask:    make(map[string]types.DrawTask),
 	}
+}
+
+func (b *Bot) SetTaskController(controller TaskController) {
+	b.taskControl = controller
 }
 
 func (b *Bot) Run(ctx context.Context) error {
@@ -342,6 +352,26 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		if err := b.editMessage(ctx, chatID, messageID, statusText); err != nil {
 			b.logger.Warn("edit regen status failed", "task_id", taskID, "error", err)
 			_, _ = b.sendMessage(ctx, chatID, statusText)
+		}
+
+	case strings.HasPrefix(data, cbStopPrefix):
+		taskID := strings.TrimPrefix(data, cbStopPrefix)
+		if strings.TrimSpace(taskID) == "" {
+			_ = b.answerCallbackQuery(ctx, query.ID, "操作无效，请重新生成", true)
+			return
+		}
+		if b.taskControl == nil {
+			_ = b.answerCallbackQuery(ctx, query.ID, "暂不支持停止", true)
+			return
+		}
+		if ok := b.taskControl.CancelTask(taskID); !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "任务不可停止", true)
+			return
+		}
+		_ = b.answerCallbackQuery(ctx, query.ID, "已请求停止任务", false)
+		text := fmt.Sprintf("任务 %s\n状态: cancelling\n阶段: 正在停止任务", taskID)
+		if err := b.editMessage(ctx, chatID, messageID, text); err != nil {
+			b.logger.Warn("edit stop status failed", "task_id", taskID, "error", err)
 		}
 
 	case strings.HasPrefix(data, cbGalleryPrev), strings.HasPrefix(data, cbGalleryNext):
@@ -1030,6 +1060,13 @@ func (b *Bot) buildTaskActionMarkup(ctx context.Context, chatID int64, messageID
 		return nil
 	}
 	status := extractTaskStatus(text)
+	if statusAllowsStop(status) {
+		return &InlineKeyboardMarkup{
+			InlineKeyboard: [][]InlineKeyboardButton{
+				{{Text: "停止生成", CallbackData: cbStopPrefix + taskID}},
+			},
+		}
+	}
 	if !statusAllowsRegen(status) {
 		return nil
 	}
@@ -1095,6 +1132,11 @@ func statusAllowsRegen(status string) bool {
 		return true
 	}
 	return strings.HasPrefix(status, "completed")
+}
+
+func statusAllowsStop(status string) bool {
+	status = strings.ToLower(strings.TrimSpace(status))
+	return status == types.StatusQueued || status == types.StatusProcessing
 }
 
 func shouldFallbackToCaption(body string) bool {

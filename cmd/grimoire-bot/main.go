@@ -67,6 +67,7 @@ func main() {
 
 	bot := telegram.NewBot(cfgManager, worker, taskStore, logger)
 	orchestrator = service.NewOrchestrator(llmClient, naiClient, bot, cfgManager, taskStore, logger)
+	bot.SetTaskController(orchestrator)
 
 	worker.Start(ctx)
 	recoverTasks(ctx, taskStore, worker, logger)

@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"grimoire/internal/config"
@@ -22,6 +24,10 @@ type Orchestrator struct {
 	cfg        *config.Manager
 	taskStore  store.TaskStore
 	logger     *slog.Logger
+
+	mu             sync.Mutex
+	activeCancels  map[string]context.CancelFunc
+	pendingCancels map[string]struct{}
 }
 
 func NewOrchestrator(
@@ -33,16 +39,22 @@ func NewOrchestrator(
 	logger *slog.Logger,
 ) *Orchestrator {
 	return &Orchestrator{
-		translator: translator,
-		generator:  generator,
-		notifier:   notifier,
-		cfg:        cfg,
-		taskStore:  taskStore,
-		logger:     logger,
+		translator:     translator,
+		generator:      generator,
+		notifier:       notifier,
+		cfg:            cfg,
+		taskStore:      taskStore,
+		logger:         logger,
+		activeCancels:  make(map[string]context.CancelFunc),
+		pendingCancels: make(map[string]struct{}),
 	}
 }
 
 func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
+	taskCtx, cancel := context.WithCancel(ctx)
+	o.registerCancel(task.TaskID, cancel)
+	defer o.unregisterCancel(task.TaskID)
+
 	task.StartedAt = time.Now()
 	o.logger.Info("task processing started",
 		"task_id", task.TaskID,
@@ -52,6 +64,11 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 		"prompt", task.Prompt,
 	)
 	statusMessageID := task.StatusMessageID
+	if o.consumePendingCancel(task.TaskID) {
+		o.logger.Info("task pre-cancelled before execution", "task_id", task.TaskID)
+		o.markCancelled(task, &statusMessageID, "已取消（开始执行前）")
+		return
+	}
 	var jobID string
 	if strings.TrimSpace(task.ResumeJobID) != "" {
 		jobID = strings.TrimSpace(task.ResumeJobID)
@@ -59,22 +76,27 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 			"task_id", task.TaskID,
 			"job_id", jobID,
 		)
-		if !o.persistStatus(ctx, task, &statusMessageID, types.StatusProcessing, "polling", "",
+		if !o.persistStatus(taskCtx, task, &statusMessageID, types.StatusProcessing, "polling", "",
 			fmt.Sprintf("任务 %s\n状态: processing\n阶段: 恢复轮询\nJob ID: %s", task.TaskID, jobID)) {
 			return
 		}
 	} else {
-		if !o.persistStatus(ctx, task, &statusMessageID, types.StatusProcessing, "translating", "",
+		if !o.persistStatus(taskCtx, task, &statusMessageID, types.StatusProcessing, "translating", "",
 			fmt.Sprintf("任务 %s\n状态: processing\n阶段: 提示词翻译", task.TaskID)) {
 			return
 		}
 
 		translateStart := time.Now()
 		o.logger.Info("llm translate started", "task_id", task.TaskID, "shape", task.Shape)
-		translation, err := o.translator.Translate(ctx, task.Prompt, task.Shape)
+		translation, err := o.translator.Translate(taskCtx, task.Prompt, task.Shape)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(taskCtx.Err(), context.Canceled) {
+				o.logger.Info("llm translate cancelled", "task_id", task.TaskID)
+				o.markCancelled(task, &statusMessageID, "已取消（提示词翻译）")
+				return
+			}
 			o.logger.Error("llm translate failed", "task_id", task.TaskID, "error", err)
-			o.failTask(ctx, task, &statusMessageID, "", "LLM 翻译失败", err)
+			o.failTask(taskCtx, task, &statusMessageID, "", "LLM 翻译失败", err)
 			return
 		}
 		o.logger.Info("llm translate completed",
@@ -93,14 +115,14 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 			"character_count", len(translation.Characters),
 		)
 
-		if !o.persistStatus(ctx, task, &statusMessageID, types.StatusProcessing, "submitting", "",
+		if !o.persistStatus(taskCtx, task, &statusMessageID, types.StatusProcessing, "submitting", "",
 			fmt.Sprintf("任务 %s\n状态: processing\n阶段: 提交绘图任务", task.TaskID)) {
 			return
 		}
 
 		submitStart := time.Now()
 		o.logger.Info("nai submit started", "task_id", task.TaskID, "shape", task.Shape)
-		jobID, err = o.generator.Submit(ctx, types.GenerateRequest{
+		jobID, err = o.generator.Submit(taskCtx, types.GenerateRequest{
 			PositivePrompt: finalPositive,
 			NegativePrompt: translation.NegativePrompt,
 			Shape:          task.Shape,
@@ -108,8 +130,13 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 			Characters:     translation.Characters,
 		})
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(taskCtx.Err(), context.Canceled) {
+				o.logger.Info("nai submit cancelled", "task_id", task.TaskID)
+				o.markCancelled(task, &statusMessageID, "已取消（任务提交）")
+				return
+			}
 			o.logger.Error("nai submit failed", "task_id", task.TaskID, "error", err)
-			o.failTask(ctx, task, &statusMessageID, "", "提交绘图任务失败", err)
+			o.failTask(taskCtx, task, &statusMessageID, "", "提交绘图任务失败", err)
 			return
 		}
 		o.logger.Info("nai submit completed",
@@ -117,13 +144,13 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 			"job_id", jobID,
 			"duration_ms", time.Since(submitStart).Milliseconds(),
 		)
-		if err := o.taskStore.SetTaskJobID(ctx, task.TaskID, jobID); err != nil {
+		if err := o.taskStore.SetTaskJobID(taskCtx, task.TaskID, jobID); err != nil {
 			o.logger.Error("persist task job id failed", "task_id", task.TaskID, "job_id", jobID, "error", err)
-			o.failTask(ctx, task, &statusMessageID, jobID, "持久化任务失败", err)
+			o.failTask(taskCtx, task, &statusMessageID, jobID, "持久化任务失败", err)
 			return
 		}
 
-		if !o.persistStatus(ctx, task, &statusMessageID, types.StatusQueued, "polling", "",
+		if !o.persistStatus(taskCtx, task, &statusMessageID, types.StatusQueued, "polling", "",
 			fmt.Sprintf("任务 %s\n状态: queued\nJob ID: %s\n队列位置: 等待更新", task.TaskID, jobID)) {
 			return
 		}
@@ -139,35 +166,39 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-taskCtx.Done():
 			o.logger.Warn("task context cancelled", "task_id", task.TaskID, "job_id", jobID)
-			_ = o.taskStore.UpdateTaskStatus(context.Background(), task.TaskID, "cancelled", "failed", "context cancelled")
-			o.upsertStatus(context.Background(), task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: cancelled", task.TaskID))
+			o.markCancelled(task, &statusMessageID, "已取消（生成中）")
 			return
 		default:
 		}
 
-		result, err := o.generator.Poll(ctx, jobID)
+		result, err := o.generator.Poll(taskCtx, jobID)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(taskCtx.Err(), context.Canceled) {
+				o.logger.Info("nai poll cancelled", "task_id", task.TaskID, "job_id", jobID)
+				o.markCancelled(task, &statusMessageID, "已取消（轮询）")
+				return
+			}
 			o.logger.Error("nai poll failed", "task_id", task.TaskID, "job_id", jobID, "error", err)
-			o.failTask(ctx, task, &statusMessageID, jobID, "轮询失败", err)
+			o.failTask(taskCtx, task, &statusMessageID, jobID, "轮询失败", err)
 			return
 		}
 
 		switch strings.ToLower(result.Status) {
 		case types.StatusCompleted:
 			o.logger.Info("nai generation completed", "task_id", task.TaskID, "job_id", jobID)
-			o.upsertStatus(ctx, task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: completed\nJob ID: %s\n阶段: 正在保存并发送图片", task.TaskID, jobID))
+			o.upsertStatus(taskCtx, task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: completed\nJob ID: %s\n阶段: 正在保存并发送图片", task.TaskID, jobID))
 			saveStart := time.Now()
 			filePath, err := o.saveImage(result.ImageBase64, task.TaskID, jobID)
 			if err != nil {
 				o.logger.Error("save image failed", "task_id", task.TaskID, "job_id", jobID, "error", err)
-				o.failTask(ctx, task, &statusMessageID, jobID, "保存图片失败", err)
+				o.failTask(taskCtx, task, &statusMessageID, jobID, "保存图片失败", err)
 				return
 			}
-			if err := o.taskStore.SaveTaskResult(ctx, task.TaskID, jobID, filePath, time.Now()); err != nil {
+			if err := o.taskStore.SaveTaskResult(taskCtx, task.TaskID, jobID, filePath, time.Now()); err != nil {
 				o.logger.Error("persist task result failed", "task_id", task.TaskID, "job_id", jobID, "error", err)
-				o.failTask(ctx, task, &statusMessageID, jobID, "持久化结果失败", err)
+				o.failTask(taskCtx, task, &statusMessageID, jobID, "持久化结果失败", err)
 				return
 			}
 			o.logger.Info("image saved",
@@ -181,10 +212,10 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 			if statusMessageID > 0 {
 				resultMessageID = statusMessageID
 			}
-			o.appendGalleryIndex(ctx, task, resultMessageID, jobID, filePath, caption)
+			o.appendGalleryIndex(taskCtx, task, resultMessageID, jobID, filePath, caption)
 			if statusMessageID > 0 {
 				sendStart := time.Now()
-				if err := o.notifier.EditPhoto(ctx, task.ChatID, statusMessageID, filePath, caption); err == nil {
+				if err := o.notifier.EditPhoto(taskCtx, task.ChatID, statusMessageID, filePath, caption); err == nil {
 					o.logger.Info("photo edited into status message",
 						"task_id", task.TaskID,
 						"job_id", jobID,
@@ -203,9 +234,9 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 			}
 
 			sendStart := time.Now()
-			if err := o.notifier.NotifyPhoto(ctx, task.ChatID, filePath, caption); err != nil {
+			if err := o.notifier.NotifyPhoto(taskCtx, task.ChatID, filePath, caption); err != nil {
 				o.logger.Error("send photo failed", "task_id", task.TaskID, "job_id", jobID, "error", err)
-				o.upsertStatus(ctx, task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: completed_with_warning\nJob ID: %s\n警告: 发图失败\n错误: %v\n图片路径: %s", task.TaskID, jobID, err, filePath))
+				o.upsertStatus(taskCtx, task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: completed_with_warning\nJob ID: %s\n警告: 发图失败\n错误: %v\n图片路径: %s", task.TaskID, jobID, err, filePath))
 				return
 			}
 			o.logger.Info("photo sent as new message",
@@ -213,7 +244,7 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 				"job_id", jobID,
 				"duration_ms", time.Since(sendStart).Milliseconds(),
 			)
-			o.upsertStatus(ctx, task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: completed\nJob ID: %s\n结果: 图片已发送（编辑状态消息失败，已另发）", task.TaskID, jobID))
+			o.upsertStatus(taskCtx, task.ChatID, &statusMessageID, fmt.Sprintf("任务 %s\n状态: completed\nJob ID: %s\n结果: 图片已发送（编辑状态消息失败，已另发）", task.TaskID, jobID))
 			return
 
 		case types.StatusFailed:
@@ -222,7 +253,7 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 				errMsg = "未知错误"
 			}
 			o.logger.Error("nai generation failed", "task_id", task.TaskID, "job_id", jobID, "error", errMsg)
-			o.failTask(ctx, task, &statusMessageID, jobID, "绘图失败", fmt.Errorf("%s", errMsg))
+			o.failTask(taskCtx, task, &statusMessageID, jobID, "绘图失败", fmt.Errorf("%s", errMsg))
 			return
 
 		case types.StatusQueued, types.StatusProcessing:
@@ -236,7 +267,7 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 					"status", currentStatus,
 					"queue_position", result.QueuePosition,
 				)
-				if !o.persistStatus(ctx, task, &statusMessageID, currentStatus, "polling", "",
+				if !o.persistStatus(taskCtx, task, &statusMessageID, currentStatus, "polling", "",
 					fmt.Sprintf("任务 %s\n状态: %s\nJob ID: %s\n队列位置: %d", task.TaskID, currentStatus, jobID, result.QueuePosition)) {
 					return
 				}
@@ -247,11 +278,50 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 		}
 
 		select {
-		case <-ctx.Done():
+		case <-taskCtx.Done():
 			return
 		case <-time.After(pollEvery):
 		}
 	}
+}
+
+func (o *Orchestrator) CancelTask(taskID string) bool {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false
+	}
+
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if cancel, ok := o.activeCancels[taskID]; ok {
+		cancel()
+		return true
+	}
+	o.pendingCancels[taskID] = struct{}{}
+	return true
+}
+
+func (o *Orchestrator) registerCancel(taskID string, cancel context.CancelFunc) {
+	o.mu.Lock()
+	o.activeCancels[taskID] = cancel
+	o.mu.Unlock()
+}
+
+func (o *Orchestrator) unregisterCancel(taskID string) {
+	o.mu.Lock()
+	delete(o.activeCancels, taskID)
+	delete(o.pendingCancels, taskID)
+	o.mu.Unlock()
+}
+
+func (o *Orchestrator) consumePendingCancel(taskID string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	_, ok := o.pendingCancels[taskID]
+	if ok {
+		delete(o.pendingCancels, taskID)
+	}
+	return ok
 }
 
 func (o *Orchestrator) persistStatus(ctx context.Context, task types.DrawTask, statusMessageID *int64, status string, stage string, errMsg string, notifyText string) bool {
@@ -298,6 +368,17 @@ func (o *Orchestrator) appendGalleryIndex(ctx context.Context, task types.DrawTa
 			"error", err,
 		)
 	}
+}
+
+func (o *Orchestrator) markCancelled(task types.DrawTask, statusMessageID *int64, reason string) {
+	taskID := strings.TrimSpace(task.TaskID)
+	if taskID == "" {
+		return
+	}
+
+	_ = o.taskStore.UpdateTaskStatus(context.Background(), taskID, "cancelled", "failed", reason)
+	text := fmt.Sprintf("任务 %s\n状态: cancelled\n原因: %s", taskID, reason)
+	o.upsertStatus(context.Background(), task.ChatID, statusMessageID, text)
 }
 
 func (o *Orchestrator) upsertStatus(ctx context.Context, chatID int64, messageID *int64, text string) {

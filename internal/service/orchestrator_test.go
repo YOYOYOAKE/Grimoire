@@ -155,6 +155,52 @@ func TestProcessTaskResumeJobIDSkipsTranslateAndSubmit(t *testing.T) {
 	}
 }
 
+func TestCancelTaskBeforeProcessSkipsExecution(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustConfigManager(t)
+	translator := &stubTranslator{
+		result: types.TranslationResult{
+			PositivePrompt: "global_pos",
+			NegativePrompt: "global_neg",
+		},
+	}
+	generator := &resumeGenerator{}
+	notifier := &stubNotifier{}
+	taskStore := &stubTaskStore{}
+
+	orch := NewOrchestrator(
+		translator,
+		generator,
+		notifier,
+		cfg,
+		taskStore,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	if !orch.CancelTask("task-000888") {
+		t.Fatalf("expected cancel request accepted")
+	}
+	orch.ProcessTask(context.Background(), types.DrawTask{
+		TaskID:          "task-000888",
+		ChatID:          1,
+		UserID:          1,
+		StatusMessageID: 66,
+		Prompt:          "should not run",
+		Shape:           "square",
+	})
+
+	if translator.calls != 0 {
+		t.Fatalf("expected translator not called")
+	}
+	if generator.pollCalls != 0 || generator.submitCalls != 0 {
+		t.Fatalf("expected generator not called")
+	}
+	if taskStore.lastStatus != "cancelled" {
+		t.Fatalf("expected cancelled status persisted, got %q", taskStore.lastStatus)
+	}
+}
+
 type stubTranslator struct {
 	result types.TranslationResult
 	err    error
@@ -240,6 +286,7 @@ type stubTaskStore struct {
 	updateStatusCalls int
 	setJobIDCalls     int
 	saveResultCalls   int
+	lastStatus        string
 }
 
 func (s *stubTaskStore) Init(ctx context.Context) error { return nil }
@@ -252,6 +299,7 @@ func (s *stubTaskStore) CreateInboundMessage(ctx context.Context, chatID, userID
 func (s *stubTaskStore) CreateTask(ctx context.Context, task types.DrawTask) error { return nil }
 func (s *stubTaskStore) UpdateTaskStatus(ctx context.Context, taskID string, status string, stage string, errMsg string) error {
 	s.updateStatusCalls++
+	s.lastStatus = status
 	return nil
 }
 func (s *stubTaskStore) SetTaskJobID(ctx context.Context, taskID string, jobID string) error {
