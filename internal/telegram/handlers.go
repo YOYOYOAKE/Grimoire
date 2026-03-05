@@ -44,10 +44,26 @@ func (b *Bot) handleMessage(ctx context.Context, msg Message) {
 	}
 
 	command, _ := splitCommand(text)
-	if command == "/start" {
+	switch command {
+	case "/start":
 		b.logger.Info("telegram start command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
 		b.clearPendingAction(msg.From.ID)
+		_, _ = b.sendMessage(ctx, msg.Chat.ID, buildStartText())
+		return
+	case "/llm":
+		b.logger.Info("telegram llm command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
+		b.clearPendingAction(msg.From.ID)
 		b.sendMainMenu(ctx, msg.Chat.ID, "")
+		return
+	case "/nai":
+		b.logger.Info("telegram nai command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
+		b.clearPendingAction(msg.From.ID)
+		b.sendNAIMenu(ctx, msg.Chat.ID, "")
+		return
+	case "/img":
+		b.logger.Info("telegram img command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
+		b.clearPendingAction(msg.From.ID)
+		b.sendImageMenu(ctx, msg.Chat.ID, "")
 		return
 	}
 
@@ -79,7 +95,16 @@ func (b *Bot) handleMessage(ctx context.Context, msg Message) {
 			"pending_action", pending,
 		)
 		b.clearPendingAction(msg.From.ID)
-		b.sendMainMenu(ctx, msg.Chat.ID, "配置已更新并生效。")
+		switch pending {
+		case pendingSetLLMBaseURL, pendingSetLLMAPIKey, pendingSetLLMModel:
+			b.sendMainMenu(ctx, msg.Chat.ID, "配置已更新并生效。")
+		case pendingSetNAIAPIKey, pendingSetNAIModel:
+			b.sendNAIMenu(ctx, msg.Chat.ID, "配置已更新并生效。")
+		case pendingSetArtist:
+			b.sendImageMenu(ctx, msg.Chat.ID, "配置已更新并生效。")
+		default:
+			_, _ = b.sendMessage(ctx, msg.Chat.ID, "配置已更新并生效。")
+		}
 		return
 	}
 
@@ -131,6 +156,24 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的 LLM Key", false)
 		_, _ = b.sendMessage(ctx, chatID, "请发送新的 LLM Key。\n发送 /start 取消。")
 
+	case data == cbSetLLMModel:
+		b.logger.Info("telegram callback set llm model", "chat_id", chatID, "user_id", query.From.ID)
+		b.setPendingAction(query.From.ID, pendingSetLLMModel)
+		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的 LLM 模型", false)
+		_, _ = b.sendMessage(ctx, chatID, "请发送新的 LLM 模型。\n发送 /start 取消。")
+
+	case data == cbSetNAIAPIKey:
+		b.logger.Info("telegram callback set nai api key", "chat_id", chatID, "user_id", query.From.ID)
+		b.setPendingAction(query.From.ID, pendingSetNAIAPIKey)
+		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的 NAI Key", false)
+		_, _ = b.sendMessage(ctx, chatID, "请发送新的 NAI Key。\n发送 /start 取消。")
+
+	case data == cbSetNAIModel:
+		b.logger.Info("telegram callback set nai model", "chat_id", chatID, "user_id", query.From.ID)
+		b.setPendingAction(query.From.ID, pendingSetNAIModel)
+		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的 NAI 模型", false)
+		_, _ = b.sendMessage(ctx, chatID, "请发送新的 NAI 模型。\n发送 /start 取消。")
+
 	case data == cbSetArtist:
 		b.logger.Info("telegram callback set artist", "chat_id", chatID, "user_id", query.From.ID)
 		b.setPendingAction(query.From.ID, pendingSetArtist)
@@ -140,20 +183,23 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	case data == cbSetImageSize:
 		b.logger.Info("telegram callback open size menu", "chat_id", chatID, "user_id", query.From.ID)
 		_ = b.answerCallbackQuery(ctx, query.ID, "请选择默认图像大小", false)
-		shape := b.cfg.Snapshot().Generation.ShapeDefault
-		if err := b.editMessageWithMarkup(ctx, chatID, messageID, buildSizeMenuText(shape), sizeMenuMarkup()); err != nil {
+		snapshot := b.cfg.Snapshot()
+		shape := snapshot.Generation.ShapeDefault
+		size := snapshot.Generation.ShapeMap[shape]
+		if err := b.editMessageWithMarkup(ctx, chatID, messageID, buildSizeMenuText(shape, size), sizeMenuMarkup()); err != nil {
 			b.logger.Warn("edit size menu failed", "error", err)
-			_, _ = b.sendMessageWithMarkup(ctx, chatID, buildSizeMenuText(shape), sizeMenuMarkup())
+			_, _ = b.sendMessageWithMarkup(ctx, chatID, buildSizeMenuText(shape, size), sizeMenuMarkup())
 		}
 
-	case data == cbBackMain:
-		b.logger.Info("telegram callback back main menu", "chat_id", chatID, "user_id", query.From.ID)
-		_ = b.answerCallbackQuery(ctx, query.ID, "已返回主菜单", false)
+	case data == cbBackImageMenu || data == cbBackMain:
+		b.logger.Info("telegram callback back image menu", "chat_id", chatID, "user_id", query.From.ID)
+		_ = b.answerCallbackQuery(ctx, query.ID, "已返回绘图设置", false)
 		snapshot := b.cfg.Snapshot()
-		text := buildMainMenuText("", snapshot.Generation.ShapeDefault, snapshot.Generation.Artist)
-		if err := b.editMessageWithMarkup(ctx, chatID, messageID, text, mainMenuMarkup()); err != nil {
-			b.logger.Warn("edit back main failed", "error", err)
-			_, _ = b.sendMessageWithMarkup(ctx, chatID, text, mainMenuMarkup())
+		shape := snapshot.Generation.ShapeDefault
+		text := buildImageMenuText("", shape, snapshot.Generation.ShapeMap[shape], snapshot.Generation.Artist)
+		if err := b.editMessageWithMarkup(ctx, chatID, messageID, text, imageMenuMarkup()); err != nil {
+			b.logger.Warn("edit back image menu failed", "error", err)
+			_, _ = b.sendMessageWithMarkup(ctx, chatID, text, imageMenuMarkup())
 		}
 
 	case strings.HasPrefix(data, cbSizePrefix):
@@ -166,10 +212,11 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		}
 		_ = b.answerCallbackQuery(ctx, query.ID, fmt.Sprintf("已设置为 %s", shape), false)
 		snapshot := b.cfg.Snapshot()
-		text := buildMainMenuText(fmt.Sprintf("默认图像大小已更新为 %s。", shape), snapshot.Generation.ShapeDefault, snapshot.Generation.Artist)
-		if err := b.editMessageWithMarkup(ctx, chatID, messageID, text, mainMenuMarkup()); err != nil {
+		newShape := snapshot.Generation.ShapeDefault
+		text := buildImageMenuText(fmt.Sprintf("默认图像大小已更新为 %s。", shape), newShape, snapshot.Generation.ShapeMap[newShape], snapshot.Generation.Artist)
+		if err := b.editMessageWithMarkup(ctx, chatID, messageID, text, imageMenuMarkup()); err != nil {
 			b.logger.Warn("edit after size set failed", "error", err)
-			_, _ = b.sendMessageWithMarkup(ctx, chatID, text, mainMenuMarkup())
+			_, _ = b.sendMessageWithMarkup(ctx, chatID, text, imageMenuMarkup())
 		}
 
 	case strings.HasPrefix(data, cbRegenPrefix), strings.HasPrefix(data, cbRetryPrefix):
@@ -350,8 +397,21 @@ func (b *Bot) enqueueDrawTask(ctx context.Context, msg Message, prompt string) {
 
 func (b *Bot) sendMainMenu(ctx context.Context, chatID int64, notice string) {
 	snapshot := b.cfg.Snapshot()
-	text := buildMainMenuText(notice, snapshot.Generation.ShapeDefault, snapshot.Generation.Artist)
+	text := buildMainMenuText(notice, snapshot.LLM.BaseURL, snapshot.LLM.Model)
 	_, _ = b.sendMessageWithMarkup(ctx, chatID, text, mainMenuMarkup())
+}
+
+func (b *Bot) sendNAIMenu(ctx context.Context, chatID int64, notice string) {
+	snapshot := b.cfg.Snapshot()
+	text := buildNAIMenuText(notice, snapshot.NAI.BaseURL, snapshot.NAI.Model)
+	_, _ = b.sendMessageWithMarkup(ctx, chatID, text, naiMenuMarkup())
+}
+
+func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, notice string) {
+	snapshot := b.cfg.Snapshot()
+	shape := snapshot.Generation.ShapeDefault
+	text := buildImageMenuText(notice, shape, snapshot.Generation.ShapeMap[shape], snapshot.Generation.Artist)
+	_, _ = b.sendMessageWithMarkup(ctx, chatID, text, imageMenuMarkup())
 }
 
 func (b *Bot) applyPendingAction(action PendingAction, value string) error {
@@ -360,6 +420,12 @@ func (b *Bot) applyPendingAction(action PendingAction, value string) error {
 		return b.cfg.SetByPath("llm.base_url", value)
 	case pendingSetLLMAPIKey:
 		return b.cfg.SetByPath("llm.api_key", value)
+	case pendingSetLLMModel:
+		return b.cfg.SetByPath("llm.model", value)
+	case pendingSetNAIAPIKey:
+		return b.cfg.SetByPath("nai.api_key", value)
+	case pendingSetNAIModel:
+		return b.cfg.SetByPath("nai.model", value)
 	case pendingSetArtist:
 		return b.cfg.SetByPath("generation.artist", value)
 	default:

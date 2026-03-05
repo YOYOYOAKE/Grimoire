@@ -22,7 +22,10 @@ func (b *Bot) setMyCommands(ctx context.Context) error {
 
 	payload := map[string]any{
 		"commands": []map[string]string{
-			{"command": "start", "description": "打开主菜单"},
+			{"command": "start", "description": "机器人介绍"},
+			{"command": "llm", "description": "LLM 设置"},
+			{"command": "nai", "description": "NAI 设置"},
+			{"command": "img", "description": "绘图设置"},
 		},
 	}
 	body, err := json.Marshal(payload)

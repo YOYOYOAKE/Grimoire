@@ -14,10 +14,27 @@ import (
 func mainMenuMarkup() *InlineKeyboardMarkup {
 	return &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{
-			{{Text: "设置 LLM API", CallbackData: cbSetLLMBaseURL}},
-			{{Text: "设置 LLM Key", CallbackData: cbSetLLMAPIKey}},
-			{{Text: "设置画师串", CallbackData: cbSetArtist}},
-			{{Text: "设置图像大小", CallbackData: cbSetImageSize}},
+			{{Text: "更改端点", CallbackData: cbSetLLMBaseURL}},
+			{{Text: "更改 Key", CallbackData: cbSetLLMAPIKey}},
+			{{Text: "更改模型", CallbackData: cbSetLLMModel}},
+		},
+	}
+}
+
+func naiMenuMarkup() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{{Text: "更改 Key", CallbackData: cbSetNAIAPIKey}},
+			{{Text: "更改模型", CallbackData: cbSetNAIModel}},
+		},
+	}
+}
+
+func imageMenuMarkup() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{{Text: "更改图像尺寸", CallbackData: cbSetImageSize}},
+			{{Text: "更改画师串", CallbackData: cbSetArtist}},
 		},
 	}
 }
@@ -25,28 +42,85 @@ func mainMenuMarkup() *InlineKeyboardMarkup {
 func sizeMenuMarkup() *InlineKeyboardMarkup {
 	return &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{
-			{{Text: "方形 (1024x1024)", CallbackData: "size:square"}, {Text: "横向 (1216x832)", CallbackData: "size:landscape"}},
-			{{Text: "纵向 (832x1216)", CallbackData: "size:portrait"}},
-			{{Text: "返回主菜单", CallbackData: cbBackMain}},
+			{{Text: "方形 (1024x1024)", CallbackData: cbSizePrefix + "square"}, {Text: "横向 (1216x832)", CallbackData: cbSizePrefix + "landscape"}},
+			{{Text: "纵向 (832x1216)", CallbackData: cbSizePrefix + "portrait"}},
+			{{Text: "返回绘图设置", CallbackData: cbBackImageMenu}},
 		},
 	}
 }
 
-func buildMainMenuText(notice string, shape string, artist string) string {
-	artist = strings.TrimSpace(artist)
-	artistDisplay := "未设置"
-	if artist != "" {
-		artistDisplay = truncate(artist, 120)
+func buildStartText() string {
+	return "Grimoire Bot\n\n发送任意文本可直接发起绘图。\n使用 /llm 查看或修改 LLM 设置。\n使用 /nai 查看或修改 NAI 设置。\n使用 /img 查看或修改绘图设置。"
+}
+
+func buildMainMenuText(notice string, endpoint string, model string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	model = strings.TrimSpace(model)
+	endpointDisplay := "未设置"
+	if endpoint != "" {
+		endpointDisplay = endpoint
 	}
-	menu := fmt.Sprintf("主菜单\n请选择操作：\n- 设置 LLM API\n- 设置 LLM Key\n- 设置画师串\n- 设置图像大小\n\n当前默认图像大小: %s\n当前画师串: %s", shape, artistDisplay)
+	modelDisplay := "未设置"
+	if model != "" {
+		modelDisplay = model
+	}
+	menu := fmt.Sprintf("LLM 设置\n当前端点: %s\n当前模型: %s\n\n请选择操作：\n- 更改端点\n- 更改 Key\n- 更改模型", endpointDisplay, modelDisplay)
 	if strings.TrimSpace(notice) == "" {
 		return menu
 	}
 	return notice + "\n\n" + menu
 }
 
-func buildSizeMenuText(shape string) string {
-	return fmt.Sprintf("请选择默认图像大小。\n当前: %s", shape)
+func buildNAIMenuText(notice string, endpoint string, model string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	model = strings.TrimSpace(model)
+	endpointDisplay := "未设置"
+	if endpoint != "" {
+		endpointDisplay = endpoint
+	}
+	modelDisplay := "未设置"
+	if model != "" {
+		modelDisplay = model
+	}
+	menu := fmt.Sprintf("NAI 设置\n当前端点: %s\n当前模型: %s\n\n请选择操作：\n- 更改 Key\n- 更改模型", endpointDisplay, modelDisplay)
+	if strings.TrimSpace(notice) == "" {
+		return menu
+	}
+	return notice + "\n\n" + menu
+}
+
+func buildImageMenuText(notice string, shape string, size string, artist string) string {
+	artist = strings.TrimSpace(artist)
+	artistDisplay := "未设置"
+	if artist != "" {
+		artistDisplay = truncate(artist, 120)
+	}
+	shape = strings.TrimSpace(shape)
+	size = strings.TrimSpace(size)
+	if shape == "" {
+		shape = "未设置"
+	}
+	shapeDisplay := shape
+	if size != "" {
+		shapeDisplay = fmt.Sprintf("%s (%s)", shape, size)
+	}
+	menu := fmt.Sprintf("绘图设置\n当前图像尺寸: %s\n当前画师串: %s\n\n请选择操作：\n- 更改图像尺寸\n- 更改画师串", shapeDisplay, artistDisplay)
+	if strings.TrimSpace(notice) == "" {
+		return menu
+	}
+	return notice + "\n\n" + menu
+}
+
+func buildSizeMenuText(shape string, size string) string {
+	shape = strings.TrimSpace(shape)
+	size = strings.TrimSpace(size)
+	if shape == "" {
+		shape = "未设置"
+	}
+	if size == "" {
+		return fmt.Sprintf("请选择默认图像大小。\n当前: %s", shape)
+	}
+	return fmt.Sprintf("请选择默认图像大小。\n当前: %s (%s)", shape, size)
 }
 
 func (b *Bot) rememberRetryTask(task types.DrawTask) {

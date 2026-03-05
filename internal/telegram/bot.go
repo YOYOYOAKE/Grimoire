@@ -17,9 +17,13 @@ const apiBase = "https://api.telegram.org"
 const (
 	cbSetLLMBaseURL = "menu:set_llm_base_url"
 	cbSetLLMAPIKey  = "menu:set_llm_api_key"
+	cbSetLLMModel   = "menu:set_llm_model"
+	cbSetNAIAPIKey  = "menu:set_nai_api_key"
+	cbSetNAIModel   = "menu:set_nai_model"
 	cbSetArtist     = "menu:set_artist"
 	cbSetImageSize  = "menu:set_image_size"
-	cbBackMain      = "menu:back_main"
+	cbBackImageMenu = "menu:back_image"
+	cbBackMain      = "menu:back_main" // legacy callback data kept for compatibility.
 	cbSizePrefix    = "size:"
 	cbStopPrefix    = "stop:"
 	cbRegenPrefix   = "regen:"
@@ -34,6 +38,9 @@ const (
 	pendingNone PendingAction = iota
 	pendingSetLLMBaseURL
 	pendingSetLLMAPIKey
+	pendingSetLLMModel
+	pendingSetNAIAPIKey
+	pendingSetNAIModel
 	pendingSetArtist
 )
 

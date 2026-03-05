@@ -72,7 +72,7 @@ func TestHandleMessageFreeTextRepliesToOriginalMessage(t *testing.T) {
 func TestStartClearsPendingAction(t *testing.T) {
 	t.Parallel()
 
-	bot, _, _, _, cfg := newTestBot(t)
+	bot, _, _, transport, cfg := newTestBot(t)
 	adminID := cfg.Snapshot().Telegram.AdminUserID
 
 	bot.setPendingAction(adminID, pendingSetLLMAPIKey)
@@ -88,6 +88,82 @@ func TestStartClearsPendingAction(t *testing.T) {
 
 	if bot.getPendingAction(adminID) != pendingNone {
 		t.Fatalf("expected pending action cleared")
+	}
+	body := transport.LastBody("/sendMessage")
+	if body == "" || !strings.Contains(body, "Grimoire Bot") {
+		t.Fatalf("expected start intro message, body=%s", body)
+	}
+}
+
+func TestCommandLLMSendsSettingsMenu(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, transport, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+
+	bot.handleMessage(context.Background(), Message{
+		From: &User{ID: adminID},
+		Chat: Chat{ID: 1001},
+		Text: "/llm",
+	})
+
+	body := transport.LastBody("/sendMessage")
+	if body == "" {
+		t.Fatalf("expected llm menu payload")
+	}
+	if !strings.Contains(body, "LLM 设置") {
+		t.Fatalf("expected llm menu text, body=%s", body)
+	}
+	if !strings.Contains(body, cbSetLLMModel) {
+		t.Fatalf("expected llm model button, body=%s", body)
+	}
+}
+
+func TestCommandNAISendsSettingsMenu(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, transport, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+
+	bot.handleMessage(context.Background(), Message{
+		From: &User{ID: adminID},
+		Chat: Chat{ID: 1001},
+		Text: "/nai",
+	})
+
+	body := transport.LastBody("/sendMessage")
+	if body == "" {
+		t.Fatalf("expected nai menu payload")
+	}
+	if !strings.Contains(body, "NAI 设置") {
+		t.Fatalf("expected nai menu text, body=%s", body)
+	}
+	if !strings.Contains(body, cbSetNAIModel) {
+		t.Fatalf("expected nai model button, body=%s", body)
+	}
+}
+
+func TestCommandImgSendsSettingsMenu(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, transport, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+
+	bot.handleMessage(context.Background(), Message{
+		From: &User{ID: adminID},
+		Chat: Chat{ID: 1001},
+		Text: "/img",
+	})
+
+	body := transport.LastBody("/sendMessage")
+	if body == "" {
+		t.Fatalf("expected image menu payload")
+	}
+	if !strings.Contains(body, "绘图设置") {
+		t.Fatalf("expected image menu text, body=%s", body)
+	}
+	if !strings.Contains(body, cbSetImageSize) {
+		t.Fatalf("expected image size button, body=%s", body)
 	}
 }
 
@@ -122,6 +198,40 @@ func TestCallbackAndPendingInputUpdatesLLMBaseURL(t *testing.T) {
 	}
 	if got := cfg.Snapshot().LLM.BaseURL; got != "https://new.example.com/v1" {
 		t.Fatalf("unexpected llm base url: %q", got)
+	}
+}
+
+func TestCallbackAndPendingInputUpdatesLLMModel(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, _, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-llm-model",
+		From: User{ID: adminID},
+		Message: &Message{
+			MessageID: 205,
+			Chat:      Chat{ID: 1001},
+		},
+		Data: cbSetLLMModel,
+	})
+
+	if bot.getPendingAction(adminID) != pendingSetLLMModel {
+		t.Fatalf("expected pendingSetLLMModel")
+	}
+
+	bot.handleMessage(context.Background(), Message{
+		From: &User{ID: adminID},
+		Chat: Chat{ID: 1001},
+		Text: "gpt-5-mini",
+	})
+
+	if bot.getPendingAction(adminID) != pendingNone {
+		t.Fatalf("expected pending action cleared")
+	}
+	if got := cfg.Snapshot().LLM.Model; got != "gpt-5-mini" {
+		t.Fatalf("unexpected llm model: %q", got)
 	}
 }
 
@@ -181,7 +291,42 @@ func TestCallbackAndPendingInputUpdatesArtist(t *testing.T) {
 	}
 }
 
-func TestSetMyCommandsRegistersOnlyStart(t *testing.T) {
+func TestCallbackAndPendingInputUpdatesNAIModel(t *testing.T) {
+	t.Parallel()
+
+	bot, _, _, _, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-nai-model",
+		From: User{ID: adminID},
+		Message: &Message{
+			MessageID: 212,
+			Chat:      Chat{ID: 1001},
+		},
+		Data: cbSetNAIModel,
+	})
+
+	if bot.getPendingAction(adminID) != pendingSetNAIModel {
+		t.Fatalf("expected pendingSetNAIModel")
+	}
+
+	value := "nai-diffusion-4-5-curated-preview"
+	bot.handleMessage(context.Background(), Message{
+		From: &User{ID: adminID},
+		Chat: Chat{ID: 1001},
+		Text: value,
+	})
+
+	if got := cfg.Snapshot().NAI.Model; got != value {
+		t.Fatalf("unexpected nai model: %q", got)
+	}
+	if bot.getPendingAction(adminID) != pendingNone {
+		t.Fatalf("expected pending action cleared")
+	}
+}
+
+func TestSetMyCommandsRegistersBotCommands(t *testing.T) {
 	t.Parallel()
 
 	bot, _, _, transport, _ := newTestBot(t)
@@ -193,11 +338,10 @@ func TestSetMyCommandsRegistersOnlyStart(t *testing.T) {
 	if payload == "" {
 		t.Fatalf("expected captured setMyCommands payload")
 	}
-	if !strings.Contains(payload, `"command":"start"`) {
-		t.Fatalf("expected payload includes start command, body=%s", payload)
-	}
-	if strings.Contains(payload, `"command":"draw"`) || strings.Contains(payload, `"command":"set"`) {
-		t.Fatalf("expected no legacy commands, body=%s", payload)
+	for _, command := range []string{`"command":"start"`, `"command":"llm"`, `"command":"nai"`, `"command":"img"`} {
+		if !strings.Contains(payload, command) {
+			t.Fatalf("expected payload includes %s, body=%s", command, payload)
+		}
 	}
 }
 
