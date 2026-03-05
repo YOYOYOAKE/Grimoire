@@ -9,7 +9,7 @@ llm:
   base_url: "https://api.openai.com/v1"
   api_key: ""
   model: "gpt-4o-mini"
-  timeout_sec: 30
+  timeout_sec: 180
 
 nai:
   base_url: "https://image.idlecloud.cc/api"

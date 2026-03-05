@@ -40,7 +40,7 @@ func buildBaseConfig(sqlitePath string) (Config, error) {
 			ProxyURL:    strings.TrimSpace(os.Getenv(EnvTelegramProxyURL)),
 		},
 		LLM: LLMConfig{
-			TimeoutSec: 30,
+			TimeoutSec: 180,
 		},
 		NAI: NAIConfig{
 			BaseURL:         defaultNAIBaseURL,
@@ -76,7 +76,7 @@ func normalizeConfig(cfg Config) Config {
 	cfg.LLM.APIKey = strings.TrimSpace(cfg.LLM.APIKey)
 	cfg.LLM.Model = strings.TrimSpace(cfg.LLM.Model)
 	if cfg.LLM.TimeoutSec <= 0 {
-		cfg.LLM.TimeoutSec = 30
+		cfg.LLM.TimeoutSec = 180
 	}
 
 	cfg.NAI.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.NAI.BaseURL), "/")
