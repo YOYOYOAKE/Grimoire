@@ -73,7 +73,11 @@ func main() {
 
 	worker.Start(ctx)
 	recoverTasks(ctx, taskStore, worker, logger)
-	logger.Info("grimoire bot started", "sqlite_path", cfgManager.Path())
+	logger.Info(
+		"grimoire bot started",
+		"config_path", cfgManager.ConfigPath(),
+		"sqlite_path", cfgManager.Path(),
+	)
 
 	if err := bot.Run(ctx); err != nil {
 		logger.Error("bot 运行失败", "error", err)

@@ -9,8 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path/filepath"
-	"sync"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -199,16 +198,14 @@ func TestNewXianyunClientSetsHTTPTimeout(t *testing.T) {
 	t.Parallel()
 
 	client := NewXianyunClient(mustConfigManager(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if client.httpClient.Timeout != 60*time.Second {
+	if client.httpClient.Timeout != 180*time.Second {
 		t.Fatalf("unexpected timeout: %s", client.httpClient.Timeout)
 	}
 }
 
 func mustConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
-	ensureTestTelegramEnv()
-
-	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	dbPath := t.TempDir() + "/grimoire.db"
 	mgr, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -216,12 +213,6 @@ func mustConfigManager(t *testing.T) *config.Manager {
 	t.Cleanup(func() {
 		_ = mgr.Close()
 	})
-	if err := mgr.SetByPath("nai.api_key", "nai-key"); err != nil {
-		t.Fatalf("set nai.api_key: %v", err)
-	}
-	if err := mgr.SetByPath("nai.model", "nai-model"); err != nil {
-		t.Fatalf("set nai.model: %v", err)
-	}
 	return mgr
 }
 
@@ -248,12 +239,54 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
-var naiTestEnvOnce sync.Once
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "grimoire-nai-test-*")
+	if err != nil {
+		panic(err)
+	}
 
-func ensureTestTelegramEnv() {
-	naiTestEnvOnce.Do(func() {
-		_ = os.Setenv(config.EnvTelegramBotToken, "token")
-		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
-		_ = os.Setenv(config.EnvTelegramProxyURL, "")
-	})
+	if err := os.MkdirAll(dir+"/configs", 0o755); err != nil {
+		panic(err)
+	}
+	configYAML := `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
+  proxy: ""
+  timeout_sec: 60
+llm:
+  timeout_sec: 180
+  openai_custom:
+    enable: true
+    base_url: "https://api.openai.com/v1"
+    api_key: "llm-key"
+    model: "gpt-4o-mini"
+    proxy: ""
+  openrouter:
+    enable: false
+    api_key: ""
+    model: ""
+    proxy: ""
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: "nai-key"
+  model: "nai-model"
+  timeout_sec: 180
+  proxy: ""
+`
+	if err := os.WriteFile(dir+"/configs/config.yaml", []byte(strings.TrimSpace(configYAML)+"\n"), 0o600); err != nil {
+		panic(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.Chdir(wd)
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }

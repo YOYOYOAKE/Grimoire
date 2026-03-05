@@ -2,49 +2,46 @@ package config
 
 import (
 	"fmt"
-	"os"
-	"strconv"
+	"net/url"
 	"strings"
 )
 
 const (
-	EnvTelegramBotToken    = "GRIMOIRE_TELEGRAM_BOT_TOKEN"
-	EnvTelegramAdminUserID = "GRIMOIRE_TELEGRAM_ADMIN_USER_ID"
-	EnvTelegramProxyURL    = "GRIMOIRE_TELEGRAM_PROXY_URL"
-
+	DefaultConfigPath = "./configs/config.yaml"
 	DefaultSQLitePath = "./data/grimoire.db"
-	defaultSaveDir    = "./data/images"
-	defaultNAIBaseURL = "https://image.idlecloud.cc/api"
+
+	ProviderOpenAICustom = "openai_custom"
+	ProviderOpenRouter   = "openrouter"
+
+	defaultSaveDir            = "./data/images"
+	defaultOpenRouterBaseURL  = "https://openrouter.ai/api/v1"
+	defaultNAIBaseURL         = "https://image.idlecloud.cc/api"
+	defaultTelegramTimeoutSec = 60
+	defaultLLMTimeoutSec      = 180
+	defaultNAITimeoutSec      = 180
+	defaultNAIPollSec         = 5
 )
 
-func buildBaseConfig(sqlitePath string) (Config, error) {
+func buildBaseConfigFromYAML(raw yamlConfig, sqlitePath string) (Config, error) {
 	sqlitePath = strings.TrimSpace(sqlitePath)
 	if sqlitePath == "" {
 		sqlitePath = DefaultSQLitePath
 	}
 
-	adminRaw := strings.TrimSpace(os.Getenv(EnvTelegramAdminUserID))
-	adminID := int64(0)
-	if adminRaw != "" {
-		parsed, err := strconv.ParseInt(adminRaw, 10, 64)
-		if err != nil {
-			return Config{}, fmt.Errorf("%s 必须是整数: %w", EnvTelegramAdminUserID, err)
-		}
-		adminID = parsed
-	}
-
 	cfg := Config{
 		Telegram: TelegramConfig{
-			BotToken:    strings.TrimSpace(os.Getenv(EnvTelegramBotToken)),
-			AdminUserID: adminID,
-			ProxyURL:    strings.TrimSpace(os.Getenv(EnvTelegramProxyURL)),
-		},
-		LLM: LLMConfig{
-			TimeoutSec: 180,
+			BotToken:    raw.Telegram.BotToken,
+			AdminUserID: raw.Telegram.AdminUserID,
+			ProxyURL:    firstNonEmpty(raw.Telegram.Proxy, raw.Telegram.ProxyURL),
+			TimeoutSec:  raw.Telegram.TimeoutSec,
 		},
 		NAI: NAIConfig{
-			BaseURL:         defaultNAIBaseURL,
-			PollIntervalSec: 5,
+			BaseURL:         raw.NAI.BaseURL,
+			APIKey:          raw.NAI.APIKey,
+			Model:           raw.NAI.Model,
+			TimeoutSec:      raw.NAI.TimeoutSec,
+			Proxy:           raw.NAI.Proxy,
+			PollIntervalSec: defaultNAIPollSec,
 		},
 		Generation: GenerationConfig{
 			ShapeDefault: "square",
@@ -65,25 +62,69 @@ func buildBaseConfig(sqlitePath string) (Config, error) {
 			SQLitePath:        sqlitePath,
 		},
 	}
-	return normalizeConfig(cfg), nil
+
+	openaiEnabled := raw.LLM.OpenAICustom.Enable
+	openrouterEnabled := raw.LLM.OpenRouter.Enable
+	switch {
+	case openaiEnabled && !openrouterEnabled:
+		cfg.LLM = LLMConfig{
+			Provider:   ProviderOpenAICustom,
+			BaseURL:    raw.LLM.OpenAICustom.BaseURL,
+			APIKey:     raw.LLM.OpenAICustom.APIKey,
+			Model:      raw.LLM.OpenAICustom.Model,
+			TimeoutSec: raw.LLM.TimeoutSec,
+			Proxy:      raw.LLM.OpenAICustom.Proxy,
+		}
+	case !openaiEnabled && openrouterEnabled:
+		cfg.LLM = LLMConfig{
+			Provider:   ProviderOpenRouter,
+			BaseURL:    defaultOpenRouterBaseURL,
+			APIKey:     raw.LLM.OpenRouter.APIKey,
+			Model:      raw.LLM.OpenRouter.Model,
+			TimeoutSec: raw.LLM.TimeoutSec,
+			Proxy:      raw.LLM.OpenRouter.Proxy,
+		}
+	default:
+		return Config{}, fmt.Errorf("llm.openai_custom.enable 与 llm.openrouter.enable 必须且仅能启用一个")
+	}
+
+	cfg = normalizeConfig(cfg)
+	if err := validate(cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
 }
 
 func normalizeConfig(cfg Config) Config {
 	cfg.Telegram.BotToken = strings.TrimSpace(cfg.Telegram.BotToken)
 	cfg.Telegram.ProxyURL = strings.TrimSpace(cfg.Telegram.ProxyURL)
+	if cfg.Telegram.TimeoutSec <= 0 {
+		cfg.Telegram.TimeoutSec = defaultTelegramTimeoutSec
+	}
 
-	cfg.LLM.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.LLM.BaseURL), "/")
+	cfg.LLM.Provider = strings.TrimSpace(cfg.LLM.Provider)
+	cfg.LLM.BaseURL = strings.TrimSpace(cfg.LLM.BaseURL)
+	if cfg.LLM.Provider == ProviderOpenAICustom {
+		cfg.LLM.BaseURL = ensureOpenAICustomV1BaseURL(cfg.LLM.BaseURL)
+	} else {
+		cfg.LLM.BaseURL = strings.TrimRight(cfg.LLM.BaseURL, "/")
+	}
 	cfg.LLM.APIKey = strings.TrimSpace(cfg.LLM.APIKey)
 	cfg.LLM.Model = strings.TrimSpace(cfg.LLM.Model)
+	cfg.LLM.Proxy = strings.TrimSpace(cfg.LLM.Proxy)
 	if cfg.LLM.TimeoutSec <= 0 {
-		cfg.LLM.TimeoutSec = 180
+		cfg.LLM.TimeoutSec = defaultLLMTimeoutSec
 	}
 
 	cfg.NAI.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.NAI.BaseURL), "/")
 	cfg.NAI.APIKey = strings.TrimSpace(cfg.NAI.APIKey)
 	cfg.NAI.Model = strings.TrimSpace(cfg.NAI.Model)
+	cfg.NAI.Proxy = strings.TrimSpace(cfg.NAI.Proxy)
+	if cfg.NAI.TimeoutSec <= 0 {
+		cfg.NAI.TimeoutSec = defaultNAITimeoutSec
+	}
 	if cfg.NAI.PollIntervalSec <= 0 {
-		cfg.NAI.PollIntervalSec = 5
+		cfg.NAI.PollIntervalSec = defaultNAIPollSec
 	}
 
 	cfg.Generation.ShapeDefault = strings.ToLower(strings.TrimSpace(cfg.Generation.ShapeDefault))
@@ -101,7 +142,7 @@ func normalizeConfig(cfg Config) Config {
 	if cfg.Generation.Scale <= 0 {
 		cfg.Generation.Scale = 5
 	}
-	if cfg.Generation.Sampler == "" {
+	if strings.TrimSpace(cfg.Generation.Sampler) == "" {
 		cfg.Generation.Sampler = "k_euler"
 	}
 	if cfg.Generation.NSamples <= 0 {
@@ -117,5 +158,38 @@ func normalizeConfig(cfg Config) Config {
 	if strings.TrimSpace(cfg.Runtime.SQLitePath) == "" {
 		cfg.Runtime.SQLitePath = DefaultSQLitePath
 	}
+
 	return cfg
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func ensureOpenAICustomV1BaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return strings.TrimRight(raw, "/")
+	}
+
+	path := strings.TrimSuffix(parsed.Path, "/")
+	switch {
+	case path == "":
+		parsed.Path = "/v1"
+	case strings.HasSuffix(path, "/v1"):
+		parsed.Path = path
+	default:
+		parsed.Path = path + "/v1"
+	}
+	return parsed.String()
 }

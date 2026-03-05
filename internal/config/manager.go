@@ -20,18 +20,14 @@ CREATE TABLE IF NOT EXISTS app_config (
 );`
 
 var managedConfigPaths = []string{
-	"llm.base_url",
-	"llm.api_key",
-	"llm.model",
-	"nai.api_key",
-	"nai.model",
 	"generation.shape_default",
 	"generation.artist",
 }
 
 type Manager struct {
-	path string
-	db   *sql.DB
+	path       string
+	configPath string
+	db         *sql.DB
 
 	mu  sync.RWMutex
 	cfg Config
@@ -42,12 +38,18 @@ func NewManager(path string) (*Manager, error) {
 	if path == "" {
 		path = DefaultSQLitePath
 	}
+
+	baseCfg, err := loadBaseConfigFromFile(DefaultConfigPath, path)
+	if err != nil {
+		return nil, err
+	}
+
 	db, err := openConfigDB(path)
 	if err != nil {
 		return nil, err
 	}
 
-	m := &Manager{path: path, db: db}
+	m := &Manager{path: path, configPath: DefaultConfigPath, db: db, cfg: baseCfg}
 	ctx := context.Background()
 	if err := m.initConfigStore(ctx); err != nil {
 		_ = db.Close()
@@ -78,6 +80,13 @@ func (m *Manager) Path() string {
 	return m.path
 }
 
+func (m *Manager) ConfigPath() string {
+	if m == nil {
+		return DefaultConfigPath
+	}
+	return m.configPath
+}
+
 func (m *Manager) Snapshot() Config {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -89,8 +98,14 @@ func (m *Manager) Load() (Config, error) {
 }
 
 func (m *Manager) Save(cfg Config) error {
-	cfg = normalizeConfig(cfg)
-	if err := validate(cfg); err != nil {
+	m.mu.RLock()
+	next := m.cfg
+	m.mu.RUnlock()
+
+	next.Generation.ShapeDefault = cfg.Generation.ShapeDefault
+	next.Generation.Artist = cfg.Generation.Artist
+	next = normalizeConfig(next)
+	if err := validate(next); err != nil {
 		return err
 	}
 
@@ -104,7 +119,7 @@ func (m *Manager) Save(cfg Config) error {
 	}()
 
 	for _, key := range managedConfigPaths {
-		value, err := managedValue(cfg, key)
+		value, err := managedValue(next, key)
 		if err != nil {
 			return err
 		}
@@ -123,13 +138,8 @@ ON CONFLICT(key) DO UPDATE SET
 		return fmt.Errorf("commit config tx failed: %w", err)
 	}
 
-	latest, err := m.loadConfig(ctx)
-	if err != nil {
-		return err
-	}
-
 	m.mu.Lock()
-	m.cfg = latest
+	m.cfg = next
 	m.mu.Unlock()
 	return nil
 }
@@ -137,29 +147,43 @@ ON CONFLICT(key) DO UPDATE SET
 func (m *Manager) MissingDrawConfigKeys() []string {
 	cfg := m.Snapshot()
 	missing := make([]string, 0, 5)
-	if strings.TrimSpace(cfg.LLM.BaseURL) == "" {
-		missing = append(missing, "llm.base_url")
+
+	switch cfg.LLM.Provider {
+	case ProviderOpenAICustom:
+		if strings.TrimSpace(cfg.LLM.BaseURL) == "" {
+			missing = append(missing, "llm.openai_custom.base_url")
+		}
+		if strings.TrimSpace(cfg.LLM.APIKey) == "" {
+			missing = append(missing, "llm.openai_custom.api_key")
+		}
+		if strings.TrimSpace(cfg.LLM.Model) == "" {
+			missing = append(missing, "llm.openai_custom.model")
+		}
+	case ProviderOpenRouter:
+		if strings.TrimSpace(cfg.LLM.APIKey) == "" {
+			missing = append(missing, "llm.openrouter.api_key")
+		}
+		if strings.TrimSpace(cfg.LLM.Model) == "" {
+			missing = append(missing, "llm.openrouter.model")
+		}
+	default:
+		missing = append(missing, "llm.openai_custom.enable|llm.openrouter.enable")
 	}
-	if strings.TrimSpace(cfg.LLM.APIKey) == "" {
-		missing = append(missing, "llm.api_key")
-	}
-	if strings.TrimSpace(cfg.LLM.Model) == "" {
-		missing = append(missing, "llm.model")
-	}
+
 	if strings.TrimSpace(cfg.NAI.APIKey) == "" {
 		missing = append(missing, "nai.api_key")
 	}
 	if strings.TrimSpace(cfg.NAI.Model) == "" {
 		missing = append(missing, "nai.model")
 	}
+	if strings.TrimSpace(cfg.NAI.BaseURL) == "" {
+		missing = append(missing, "nai.base_url")
+	}
 	return missing
 }
 
 func (m *Manager) loadConfig(ctx context.Context) (Config, error) {
-	cfg, err := buildBaseConfig(m.path)
-	if err != nil {
-		return Config{}, err
-	}
+	cfg := m.Snapshot()
 
 	rows, err := m.db.QueryContext(ctx, `SELECT key, value FROM app_config`)
 	if err != nil {
@@ -227,16 +251,6 @@ func openConfigDB(path string) (*sql.DB, error) {
 
 func managedValue(cfg Config, path string) (string, error) {
 	switch path {
-	case "llm.base_url":
-		return cfg.LLM.BaseURL, nil
-	case "llm.api_key":
-		return cfg.LLM.APIKey, nil
-	case "llm.model":
-		return cfg.LLM.Model, nil
-	case "nai.api_key":
-		return cfg.NAI.APIKey, nil
-	case "nai.model":
-		return cfg.NAI.Model, nil
 	case "generation.shape_default":
 		return cfg.Generation.ShapeDefault, nil
 	case "generation.artist":
@@ -248,16 +262,6 @@ func managedValue(cfg Config, path string) (string, error) {
 
 func applyManagedValue(cfg *Config, path string, value string) error {
 	switch strings.ToLower(strings.TrimSpace(path)) {
-	case "llm.base_url":
-		cfg.LLM.BaseURL = strings.TrimRight(strings.TrimSpace(value), "/")
-	case "llm.api_key":
-		cfg.LLM.APIKey = strings.TrimSpace(value)
-	case "llm.model":
-		cfg.LLM.Model = strings.TrimSpace(value)
-	case "nai.api_key":
-		cfg.NAI.APIKey = strings.TrimSpace(value)
-	case "nai.model":
-		cfg.NAI.Model = strings.TrimSpace(value)
 	case "generation.shape_default":
 		cfg.Generation.ShapeDefault = strings.ToLower(strings.TrimSpace(value))
 	case "generation.artist":

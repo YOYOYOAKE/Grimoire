@@ -6,10 +6,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -105,7 +104,7 @@ func TestTranslateWithMockServer(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
+		if !strings.HasSuffix(r.URL.Path, "/chat/completions") {
 			http.NotFound(w, r)
 			return
 		}
@@ -125,8 +124,9 @@ func TestTranslateWithMockServer(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfgManager := mustConfigManager(t, srv.URL)
+	cfgManager := mustConfigManager(t)
 	client := NewOpenAIClient(cfgManager, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 
 	result, err := client.Translate(t.Context(), "可爱的女孩", "square")
 	if err != nil {
@@ -158,8 +158,9 @@ func TestTranslateRetryOnParseFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfgManager := mustConfigManager(t, srv.URL)
+	cfgManager := mustConfigManager(t)
 	client := NewOpenAIClient(cfgManager, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 
 	result, err := client.Translate(t.Context(), "test", "square")
 	if err != nil {
@@ -183,8 +184,9 @@ func TestTranslateNetworkErrorNoRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfgManager := mustConfigManager(t, srv.URL)
+	cfgManager := mustConfigManager(t)
 	client := NewOpenAIClient(cfgManager, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 
 	_, err := client.Translate(t.Context(), "test", "square")
 	if err == nil {
@@ -205,8 +207,9 @@ func TestTranslateSSEStyleResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfgManager := mustConfigManager(t, srv.URL)
+	cfgManager := mustConfigManager(t)
 	client := NewOpenAIClient(cfgManager, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 
 	result, err := client.Translate(t.Context(), "test", "square")
 	if err != nil {
@@ -217,11 +220,9 @@ func TestTranslateSSEStyleResponse(t *testing.T) {
 	}
 }
 
-func mustConfigManager(t *testing.T, llmURL string) *config.Manager {
+func mustConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
-	ensureTestTelegramEnv()
-
-	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	dbPath := t.TempDir() + "/grimoire.db"
 	mgr, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -229,24 +230,80 @@ func mustConfigManager(t *testing.T, llmURL string) *config.Manager {
 	t.Cleanup(func() {
 		_ = mgr.Close()
 	})
-	if err := mgr.SetByPath("llm.base_url", llmURL); err != nil {
-		t.Fatalf("set llm.base_url: %v", err)
-	}
-	if err := mgr.SetByPath("llm.api_key", "llm-key"); err != nil {
-		t.Fatalf("set llm.api_key: %v", err)
-	}
-	if err := mgr.SetByPath("llm.model", "gpt-4o-mini"); err != nil {
-		t.Fatalf("set llm.model: %v", err)
-	}
 	return mgr
 }
 
-var llmTestEnvOnce sync.Once
+func routeClientToServer(t *testing.T, client *OpenAIClient, srv *httptest.Server) {
+	t.Helper()
+	targetURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server url: %v", err)
+	}
+	baseRT := srv.Client().Transport
+	client.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			clone := req.Clone(req.Context())
+			clone.URL.Scheme = targetURL.Scheme
+			clone.URL.Host = targetURL.Host
+			return baseRT.RoundTrip(clone)
+		}),
+	}
+}
 
-func ensureTestTelegramEnv() {
-	llmTestEnvOnce.Do(func() {
-		_ = os.Setenv(config.EnvTelegramBotToken, "token")
-		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
-		_ = os.Setenv(config.EnvTelegramProxyURL, "")
-	})
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "grimoire-llm-test-*")
+	if err != nil {
+		panic(err)
+	}
+
+	if err := os.MkdirAll(dir+"/configs", 0o755); err != nil {
+		panic(err)
+	}
+	configYAML := `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
+  proxy: ""
+  timeout_sec: 60
+llm:
+  timeout_sec: 180
+  openai_custom:
+    enable: true
+    base_url: "http://llm.test/v1"
+    api_key: "llm-key"
+    model: "gpt-4o-mini"
+    proxy: ""
+  openrouter:
+    enable: false
+    api_key: ""
+    model: ""
+    proxy: ""
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: "nai-key"
+  model: "nai-model"
+  timeout_sec: 180
+  proxy: ""
+`
+	if err := os.WriteFile(dir+"/configs/config.yaml", []byte(strings.TrimSpace(configYAML)+"\n"), 0o600); err != nil {
+		panic(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.Chdir(wd)
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }

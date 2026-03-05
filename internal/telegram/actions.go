@@ -50,7 +50,7 @@ func sizeMenuMarkup() *InlineKeyboardMarkup {
 }
 
 func buildStartText() string {
-	return "Grimoire Bot\n\n发送任意文本可直接发起绘图。\n使用 /llm 查看或修改 LLM 设置。\n使用 /nai 查看或修改 NAI 设置。\n使用 /img 查看或修改绘图设置。"
+	return "Grimoire Bot\n\n发送任意文本可直接发起绘图。"
 }
 
 func buildMainMenuText(notice string, endpoint string, model string) string {

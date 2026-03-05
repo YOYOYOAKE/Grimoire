@@ -8,20 +8,45 @@ import (
 
 func validate(cfg Config) error {
 	if cfg.Telegram.BotToken == "" {
-		return fmt.Errorf("环境变量 %s 不能为空", EnvTelegramBotToken)
+		return errors.New("telegram.bot_token 不能为空")
 	}
 	if cfg.Telegram.AdminUserID <= 0 {
-		return fmt.Errorf("环境变量 %s 必须 > 0", EnvTelegramAdminUserID)
+		return errors.New("telegram.admin_user_id 必须 > 0")
 	}
 	if cfg.Telegram.ProxyURL != "" {
-		parsed, err := neturl.Parse(cfg.Telegram.ProxyURL)
-		if err != nil {
-			return fmt.Errorf("环境变量 %s 非法: %w", EnvTelegramProxyURL, err)
-		}
-		if parsed.Scheme == "" || parsed.Host == "" {
-			return fmt.Errorf("环境变量 %s 必须包含 scheme 和 host", EnvTelegramProxyURL)
+		if err := validateProxyURL("telegram.proxy_url", cfg.Telegram.ProxyURL); err != nil {
+			return err
 		}
 	}
+
+	switch cfg.LLM.Provider {
+	case ProviderOpenAICustom:
+	case ProviderOpenRouter:
+	default:
+		return fmt.Errorf("不支持的 llm provider: %s", cfg.LLM.Provider)
+	}
+	if cfg.LLM.BaseURL != "" {
+		if err := validateBaseURL("llm.base_url", cfg.LLM.BaseURL); err != nil {
+			return err
+		}
+	}
+	if cfg.LLM.Proxy != "" {
+		if err := validateProxyURL("llm.proxy", cfg.LLM.Proxy); err != nil {
+			return err
+		}
+	}
+
+	if cfg.NAI.BaseURL != "" {
+		if err := validateBaseURL("nai.base_url", cfg.NAI.BaseURL); err != nil {
+			return err
+		}
+	}
+	if cfg.NAI.Proxy != "" {
+		if err := validateProxyURL("nai.proxy", cfg.NAI.Proxy); err != nil {
+			return err
+		}
+	}
+
 	if cfg.Generation.ShapeMap[cfg.Generation.ShapeDefault] == "" {
 		return fmt.Errorf("generation.shape_default=%s 未在 shape_map 中定义", cfg.Generation.ShapeDefault)
 	}
@@ -36,6 +61,28 @@ func validate(cfg Config) error {
 	}
 	if cfg.Runtime.SQLitePath == "" {
 		return errors.New("runtime.sqlite_path 不能为空")
+	}
+	return nil
+}
+
+func validateProxyURL(key string, raw string) error {
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s 非法: %w", key, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s 必须包含 scheme 和 host", key)
+	}
+	return nil
+}
+
+func validateBaseURL(key string, raw string) error {
+	parsed, err := neturl.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s 非法: %w", key, err)
+	}
+	if parsed.Scheme == "" || parsed.Host == "" {
+		return fmt.Errorf("%s 必须包含 scheme 和 host", key)
 	}
 	return nil
 }

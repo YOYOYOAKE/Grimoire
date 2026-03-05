@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -51,14 +52,14 @@ func (b *Bot) handleMessage(ctx context.Context, msg Message) {
 		_, _ = b.sendMessage(ctx, msg.Chat.ID, buildStartText())
 		return
 	case "/llm":
-		b.logger.Info("telegram llm command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
+		b.logger.Info("telegram llm command removed", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
 		b.clearPendingAction(msg.From.ID)
-		b.sendMainMenu(ctx, msg.Chat.ID, "")
+		_, _ = b.sendMessage(ctx, msg.Chat.ID, buildYAMLConfigOnlyText())
 		return
 	case "/nai":
-		b.logger.Info("telegram nai command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
+		b.logger.Info("telegram nai command removed", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
 		b.clearPendingAction(msg.From.ID)
-		b.sendNAIMenu(ctx, msg.Chat.ID, "")
+		_, _ = b.sendMessage(ctx, msg.Chat.ID, buildYAMLConfigOnlyText())
 		return
 	case "/img":
 		b.logger.Info("telegram img command", "chat_id", msg.Chat.ID, "user_id", msg.From.ID)
@@ -147,6 +148,11 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	chatID = query.Message.Chat.ID
 	messageID = query.Message.MessageID
 	data := strings.TrimSpace(query.Data)
+	if isLegacyConfigCallback(data) {
+		_ = b.answerCallbackQuery(ctx, query.ID, "请改 YAML 配置后重启", false)
+		_, _ = b.sendMessage(ctx, chatID, buildYAMLConfigOnlyText())
+		return
+	}
 
 	switch {
 	case data == cbSetLLMBaseURL:
@@ -524,15 +530,15 @@ func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, notice string) {
 func (b *Bot) applyPendingAction(action PendingAction, value string) error {
 	switch action {
 	case pendingSetLLMBaseURL:
-		return b.cfg.SetByPath("llm.base_url", value)
+		return errors.New(buildYAMLConfigOnlyText())
 	case pendingSetLLMAPIKey:
-		return b.cfg.SetByPath("llm.api_key", value)
+		return errors.New(buildYAMLConfigOnlyText())
 	case pendingSetLLMModel:
-		return b.cfg.SetByPath("llm.model", value)
+		return errors.New(buildYAMLConfigOnlyText())
 	case pendingSetNAIAPIKey:
-		return b.cfg.SetByPath("nai.api_key", value)
+		return errors.New(buildYAMLConfigOnlyText())
 	case pendingSetNAIModel:
-		return b.cfg.SetByPath("nai.model", value)
+		return errors.New(buildYAMLConfigOnlyText())
 	case pendingSetArtist:
 		return b.cfg.SetByPath("generation.artist", value)
 	default:
@@ -564,5 +570,31 @@ func buildMissingDrawConfigText(missing []string) string {
 	if len(missing) == 0 {
 		return "配置完整。"
 	}
-	return fmt.Sprintf("当前缺少绘图配置：\n- %s\n\n请使用 /llm 和 /nai 完成设置后再试。", strings.Join(missing, "\n- "))
+	return fmt.Sprintf(
+		"当前缺少绘图配置：\n- %s\n\n请编辑 %s 后重启机器人。",
+		strings.Join(missing, "\n- "),
+		"configs/config.yaml",
+	)
+}
+
+func buildYAMLConfigOnlyText() string {
+	return "LLM/NAI 配置已迁移到 configs/config.yaml，请修改配置文件后重启机器人。"
+}
+
+func isLegacyConfigCallback(data string) bool {
+	switch {
+	case data == cbSetLLMBaseURL,
+		data == cbSetLLMAPIKey,
+		data == cbSetLLMModel,
+		data == cbBackLLMMenu,
+		data == cbSetNAIAPIKey,
+		data == cbSetNAIModel,
+		strings.HasPrefix(data, cbLLMModelPickPrefix),
+		strings.HasPrefix(data, cbLLMModelPagePrefix),
+		strings.HasPrefix(data, cbLLMModelRefreshPrefix),
+		strings.HasPrefix(data, cbLLMModelManualPrefix):
+		return true
+	default:
+		return false
+	}
 }

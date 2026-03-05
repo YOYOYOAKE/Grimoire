@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"grimoire/internal/config"
@@ -30,9 +32,10 @@ func (e *parseOutputError) Error() string {
 }
 
 func NewOpenAIClient(cfg *config.Manager, logger *slog.Logger) *OpenAIClient {
+	snapshot := cfg.Snapshot()
 	return &OpenAIClient{
 		cfg:        cfg,
-		httpClient: &http.Client{},
+		httpClient: newLLMHTTPClient(snapshot.LLM.Proxy, snapshot.LLM.TimeoutSec, logger),
 		logger:     logger,
 	}
 }
@@ -47,7 +50,7 @@ func (c *OpenAIClient) Translate(ctx context.Context, naturalText string, shape 
 	You translate Chinese natural language image requests into NovelAI-friendly English tag prompts.
 
 	Output rules:
-	1) Output JSON only, no extra text.
+	1) Output JSON only, **no extra text**.
 	2) Schema:
 	{
 	  "positivePrompt":"...",
@@ -98,4 +101,29 @@ func (c *OpenAIClient) Translate(ctx context.Context, naturalText string, shape 
 		return types.TranslationResult{}, parseErr.cause
 	}
 	return types.TranslationResult{}, retryErr
+}
+
+func newLLMHTTPClient(proxyRaw string, timeoutSec int, logger *slog.Logger) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+
+	proxyRaw = strings.TrimSpace(proxyRaw)
+	if proxyRaw != "" {
+		parsed, err := url.Parse(proxyRaw)
+		if err != nil {
+			if logger != nil {
+				logger.Warn("invalid llm proxy url, fallback to direct", "proxy", proxyRaw, "error", err)
+			}
+		} else {
+			transport.Proxy = http.ProxyURL(parsed)
+		}
+	}
+
+	if timeoutSec <= 0 {
+		timeoutSec = 180
+	}
+	return &http.Client{
+		Transport: transport,
+		Timeout:   time.Duration(timeoutSec) * time.Second,
+	}
 }

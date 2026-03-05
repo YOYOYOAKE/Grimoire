@@ -26,8 +26,6 @@ func (b *Bot) setMyCommands(ctx context.Context) error {
 	payload := map[string]any{
 		"commands": []map[string]string{
 			{"command": "start", "description": "机器人介绍"},
-			{"command": "llm", "description": "LLM 设置"},
-			{"command": "nai", "description": "NAI 设置"},
 			{"command": "img", "description": "绘图设置"},
 		},
 	}
@@ -551,25 +549,36 @@ func shouldFallbackToCaption(body string) bool {
 		strings.Contains(body, "message can't be edited")
 }
 
-func newTelegramHTTPClient(proxyRaw string, logger *slog.Logger) *http.Client {
+func newTelegramHTTPClient(proxyRaw string, timeoutSec int, logger *slog.Logger) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
 	proxyRaw = strings.TrimSpace(proxyRaw)
+	timeout := resolveTimeout(timeoutSec)
 	if proxyRaw == "" {
-		return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
+		return &http.Client{Transport: transport, Timeout: timeout}
 	}
 
 	parsed, err := url.Parse(proxyRaw)
 	if err != nil {
-		logger.Warn("invalid telegram proxy url, fallback to direct", "proxy_url", proxyRaw, "error", err)
-		return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
+		if logger != nil {
+			logger.Warn("invalid telegram proxy url, fallback to direct", "proxy_url", proxyRaw, "error", err)
+		}
+		return &http.Client{Transport: transport, Timeout: timeout}
 	}
 	transport.Proxy = http.ProxyURL(parsed)
-	return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
+	return &http.Client{Transport: transport, Timeout: timeout}
 }
 
-func newDirectHTTPClient() *http.Client {
+func newDirectHTTPClient(timeoutSec int) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// LLM upstream must bypass proxy; telegram proxy only applies to Telegram API.
 	transport.Proxy = nil
-	return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
+	return &http.Client{Transport: transport, Timeout: resolveTimeout(timeoutSec)}
+}
+
+func resolveTimeout(timeoutSec int) time.Duration {
+	if timeoutSec <= 0 {
+		return defaultHTTPTimeout
+	}
+	return time.Duration(timeoutSec) * time.Second
 }

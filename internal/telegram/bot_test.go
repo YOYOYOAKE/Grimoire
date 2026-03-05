@@ -18,6 +18,58 @@ import (
 	"grimoire/internal/types"
 )
 
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "grimoire-telegram-test-*")
+	if err != nil {
+		panic(err)
+	}
+
+	if err := os.MkdirAll(dir+"/configs", 0o755); err != nil {
+		panic(err)
+	}
+	configYAML := `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
+  proxy: ""
+  timeout_sec: 60
+llm:
+  timeout_sec: 180
+  openai_custom:
+    enable: true
+    base_url: "https://api.openai.com/v1"
+    api_key: "llm-key"
+    model: "gpt-4o-mini"
+    proxy: ""
+  openrouter:
+    enable: false
+    api_key: ""
+    model: ""
+    proxy: ""
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: "nai-key"
+  model: "nai-model"
+  timeout_sec: 180
+  proxy: ""
+`
+	if err := os.WriteFile(dir+"/configs/config.yaml", []byte(strings.TrimSpace(configYAML)+"\n"), 0o600); err != nil {
+		panic(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.Chdir(wd)
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 func TestHandleMessageFreeTextEnqueuesTask(t *testing.T) {
 	t.Parallel()
 
@@ -69,31 +121,6 @@ func TestHandleMessageFreeTextRepliesToOriginalMessage(t *testing.T) {
 	}
 }
 
-func TestHandleMessageFreeTextBlockedWhenConfigMissing(t *testing.T) {
-	t.Parallel()
-
-	bot, q, _, transport, cfg := newTestBot(t)
-	if err := cfg.SetByPath("llm.api_key", ""); err != nil {
-		t.Fatalf("clear llm.api_key: %v", err)
-	}
-
-	msg := Message{
-		MessageID: 556,
-		From:      &User{ID: cfg.Snapshot().Telegram.AdminUserID},
-		Chat:      Chat{ID: 1001},
-		Text:      "来一张可爱猫娘",
-	}
-	bot.handleMessage(context.Background(), msg)
-
-	if len(q.Tasks()) != 0 {
-		t.Fatalf("expected no task enqueued when config missing")
-	}
-	body := transport.LastBody("/sendMessage")
-	if body == "" || !strings.Contains(body, "缺少绘图配置") || !strings.Contains(body, "llm.api_key") {
-		t.Fatalf("expected missing config message, body=%s", body)
-	}
-}
-
 func TestStartClearsPendingAction(t *testing.T) {
 	t.Parallel()
 
@@ -120,7 +147,7 @@ func TestStartClearsPendingAction(t *testing.T) {
 	}
 }
 
-func TestCommandLLMSendsSettingsMenu(t *testing.T) {
+func TestCommandLLMShowsYAMLMigrationHint(t *testing.T) {
 	t.Parallel()
 
 	bot, _, _, transport, cfg := newTestBot(t)
@@ -134,17 +161,14 @@ func TestCommandLLMSendsSettingsMenu(t *testing.T) {
 
 	body := transport.LastBody("/sendMessage")
 	if body == "" {
-		t.Fatalf("expected llm menu payload")
+		t.Fatalf("expected llm migration message payload")
 	}
-	if !strings.Contains(body, "LLM 设置") {
-		t.Fatalf("expected llm menu text, body=%s", body)
-	}
-	if !strings.Contains(body, cbSetLLMModel) {
-		t.Fatalf("expected llm model button, body=%s", body)
+	if !strings.Contains(body, "LLM/NAI 配置已迁移到 configs/config.yaml") {
+		t.Fatalf("expected migration hint, body=%s", body)
 	}
 }
 
-func TestCommandNAISendsSettingsMenu(t *testing.T) {
+func TestCommandNAIShowsYAMLMigrationHint(t *testing.T) {
 	t.Parallel()
 
 	bot, _, _, transport, cfg := newTestBot(t)
@@ -158,13 +182,10 @@ func TestCommandNAISendsSettingsMenu(t *testing.T) {
 
 	body := transport.LastBody("/sendMessage")
 	if body == "" {
-		t.Fatalf("expected nai menu payload")
+		t.Fatalf("expected nai migration message payload")
 	}
-	if !strings.Contains(body, "NAI 设置") {
-		t.Fatalf("expected nai menu text, body=%s", body)
-	}
-	if !strings.Contains(body, cbSetNAIModel) {
-		t.Fatalf("expected nai model button, body=%s", body)
+	if !strings.Contains(body, "LLM/NAI 配置已迁移到 configs/config.yaml") {
+		t.Fatalf("expected migration hint, body=%s", body)
 	}
 }
 
@@ -192,84 +213,14 @@ func TestCommandImgSendsSettingsMenu(t *testing.T) {
 	}
 }
 
-func TestCallbackAndPendingInputUpdatesLLMBaseURL(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, _, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb1",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 200,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetLLMBaseURL,
-	})
-
-	if bot.getPendingAction(adminID) != pendingSetLLMBaseURL {
-		t.Fatalf("expected pendingSetLLMBaseURL")
-	}
-
-	bot.handleMessage(context.Background(), Message{
-		From: &User{ID: adminID},
-		Chat: Chat{ID: 1001},
-		Text: "https://new.example.com/v1/",
-	})
-
-	if bot.getPendingAction(adminID) != pendingNone {
-		t.Fatalf("expected pending action cleared")
-	}
-	if got := cfg.Snapshot().LLM.BaseURL; got != "https://new.example.com/v1" {
-		t.Fatalf("unexpected llm base url: %q", got)
-	}
-}
-
-func TestCallbackAndPendingInputUpdatesLLMModel(t *testing.T) {
+func TestLegacyLLMCallbackShowsYAMLMigrationHint(t *testing.T) {
 	t.Parallel()
 
 	bot, _, _, transport, cfg := newTestBot(t)
 	adminID := cfg.Snapshot().Telegram.AdminUserID
-	transport.SetModelsResponse(http.StatusServiceUnavailable, `{"error":"busy"}`)
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-model",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 205,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetLLMModel,
-	})
-
-	if bot.getPendingAction(adminID) != pendingSetLLMModel {
-		t.Fatalf("expected pendingSetLLMModel")
-	}
-
-	bot.handleMessage(context.Background(), Message{
-		From: &User{ID: adminID},
-		Chat: Chat{ID: 1001},
-		Text: "gpt-5-mini",
-	})
-
-	if bot.getPendingAction(adminID) != pendingNone {
-		t.Fatalf("expected pending action cleared")
-	}
-	if got := cfg.Snapshot().LLM.Model; got != "gpt-5-mini" {
-		t.Fatalf("unexpected llm model: %q", got)
-	}
-}
-
-func TestCallbackSetLLMModelShowsFetchedModelButtons(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, transport, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-	transport.SetModelsResponse(http.StatusOK, `{"data":[{"id":"gpt-4o-mini"},{"id":"gpt-4.1-mini"}]}`)
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-menu",
+		ID:   "cb-legacy-llm",
 		From: User{ID: adminID},
 		Message: &Message{
 			MessageID: 260,
@@ -278,171 +229,9 @@ func TestCallbackSetLLMModelShowsFetchedModelButtons(t *testing.T) {
 		Data: cbSetLLMModel,
 	})
 
-	if bot.getPendingAction(adminID) != pendingNone {
-		t.Fatalf("expected no pending action")
-	}
-	body := transport.LastBody("/editMessageText")
-	if body == "" {
-		t.Fatalf("expected llm model menu payload")
-	}
-	if !strings.Contains(body, "请选择 LLM 模型") {
-		t.Fatalf("expected llm model menu text, body=%s", body)
-	}
-	if !strings.Contains(body, cbLLMModelPickPrefix) {
-		t.Fatalf("expected model pick callback, body=%s", body)
-	}
-	if !strings.Contains(body, cbLLMModelManualPrefix) {
-		t.Fatalf("expected manual callback, body=%s", body)
-	}
-}
-
-func TestCallbackPickLLMModelUpdatesConfig(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, transport, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-	transport.SetModelsResponse(http.StatusOK, `{"data":[{"id":"gpt-4o-mini"},{"id":"gpt-4.1-mini"}]}`)
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-menu-2",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 261,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetLLMModel,
-	})
-
-	session, ok := getLLMModelSessionForTest(bot, adminID)
-	if !ok {
-		t.Fatalf("expected model session")
-	}
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-pick-1",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 261,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: fmt.Sprintf("%s%s:%d", cbLLMModelPickPrefix, session.SessionID, 1),
-	})
-
-	if got := cfg.Snapshot().LLM.Model; got != "gpt-4.1-mini" {
-		t.Fatalf("unexpected llm model: %q", got)
-	}
-	body := transport.LastBody("/editMessageText")
-	if body == "" || !strings.Contains(body, "LLM 模型已更新为 gpt-4.1-mini") {
-		t.Fatalf("expected model update notice, body=%s", body)
-	}
-}
-
-func TestCallbackSetLLMModelFallbackToManualOnFetchFailure(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, transport, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-	transport.SetModelsResponse(http.StatusBadGateway, `{"error":"gateway down"}`)
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-fallback",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 262,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetLLMModel,
-	})
-
-	if bot.getPendingAction(adminID) != pendingSetLLMModel {
-		t.Fatalf("expected pendingSetLLMModel")
-	}
 	body := transport.LastBody("/sendMessage")
-	if body == "" || !strings.Contains(body, "拉取模型列表失败") {
-		t.Fatalf("expected fallback prompt, body=%s", body)
-	}
-}
-
-func TestCallbackLLMModelPageSwitch(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, transport, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-	transport.SetModelsResponse(http.StatusOK, `{"data":[{"id":"model-00"},{"id":"model-01"},{"id":"model-02"},{"id":"model-03"},{"id":"model-04"},{"id":"model-05"},{"id":"model-06"},{"id":"model-07"},{"id":"model-08"},{"id":"model-09"},{"id":"model-10"},{"id":"model-11"}]}`)
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-page-open",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 263,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetLLMModel,
-	})
-
-	session, ok := getLLMModelSessionForTest(bot, adminID)
-	if !ok {
-		t.Fatalf("expected model session")
-	}
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-page-next",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 263,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: fmt.Sprintf("%s%s:%d", cbLLMModelPagePrefix, session.SessionID, 1),
-	})
-
-	body := transport.LastBody("/editMessageText")
-	if body == "" {
-		t.Fatalf("expected page switch payload")
-	}
-	if !strings.Contains(body, "model-10") || !strings.Contains(body, "model-11") {
-		t.Fatalf("expected second page models, body=%s", body)
-	}
-}
-
-func TestCallbackLLMModelSessionExpired(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, transport, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-	transport.SetModelsResponse(http.StatusOK, `{"data":[{"id":"gpt-4o-mini"},{"id":"gpt-4.1-mini"}]}`)
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-expire-open",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 264,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetLLMModel,
-	})
-
-	session, ok := getLLMModelSessionForTest(bot, adminID)
-	if !ok {
-		t.Fatalf("expected model session")
-	}
-	expireLLMModelSessionForTest(bot, adminID)
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-llm-expire-pick",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 264,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: fmt.Sprintf("%s%s:%d", cbLLMModelPickPrefix, session.SessionID, 1),
-	})
-
-	if got := cfg.Snapshot().LLM.Model; got != "gpt-4o-mini" {
-		t.Fatalf("expected model unchanged, got %q", got)
-	}
-	body := transport.LastBody("/answerCallbackQuery")
-	if body == "" || !strings.Contains(body, "模型列表已过期") {
-		t.Fatalf("expected expired callback message, body=%s", body)
+	if body == "" || !strings.Contains(body, "LLM/NAI 配置已迁移到 configs/config.yaml") {
+		t.Fatalf("expected migration hint, body=%s", body)
 	}
 }
 
@@ -502,41 +291,6 @@ func TestCallbackAndPendingInputUpdatesArtist(t *testing.T) {
 	}
 }
 
-func TestCallbackAndPendingInputUpdatesNAIModel(t *testing.T) {
-	t.Parallel()
-
-	bot, _, _, _, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-nai-model",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 212,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: cbSetNAIModel,
-	})
-
-	if bot.getPendingAction(adminID) != pendingSetNAIModel {
-		t.Fatalf("expected pendingSetNAIModel")
-	}
-
-	value := "nai-diffusion-4-5-curated-preview"
-	bot.handleMessage(context.Background(), Message{
-		From: &User{ID: adminID},
-		Chat: Chat{ID: 1001},
-		Text: value,
-	})
-
-	if got := cfg.Snapshot().NAI.Model; got != value {
-		t.Fatalf("unexpected nai model: %q", got)
-	}
-	if bot.getPendingAction(adminID) != pendingNone {
-		t.Fatalf("expected pending action cleared")
-	}
-}
-
 func TestSetMyCommandsRegistersBotCommands(t *testing.T) {
 	t.Parallel()
 
@@ -549,10 +303,13 @@ func TestSetMyCommandsRegistersBotCommands(t *testing.T) {
 	if payload == "" {
 		t.Fatalf("expected captured setMyCommands payload")
 	}
-	for _, command := range []string{`"command":"start"`, `"command":"llm"`, `"command":"nai"`, `"command":"img"`} {
+	for _, command := range []string{`"command":"start"`, `"command":"img"`} {
 		if !strings.Contains(payload, command) {
 			t.Fatalf("expected payload includes %s, body=%s", command, payload)
 		}
+	}
+	if strings.Contains(payload, `"command":"llm"`) || strings.Contains(payload, `"command":"nai"`) {
+		t.Fatalf("expected llm/nai removed from commands, body=%s", payload)
 	}
 }
 
@@ -709,41 +466,6 @@ func TestLegacyRetryCallbackStillWorks(t *testing.T) {
 	}
 }
 
-func TestRegenCallbackBlockedWhenConfigMissing(t *testing.T) {
-	t.Parallel()
-
-	bot, q, _, transport, cfg := newTestBot(t)
-	adminID := cfg.Snapshot().Telegram.AdminUserID
-
-	if err := cfg.SetByPath("nai.model", ""); err != nil {
-		t.Fatalf("clear nai.model: %v", err)
-	}
-
-	bot.rememberRetryTask(types.DrawTask{
-		TaskID: "task-000007",
-		Prompt: "retry me",
-		Shape:  "square",
-	})
-
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "retry-cb-missing",
-		From: User{ID: adminID},
-		Message: &Message{
-			MessageID: 303,
-			Chat:      Chat{ID: 1001},
-		},
-		Data: "regen:task-000007",
-	})
-
-	if len(q.Tasks()) != 0 {
-		t.Fatalf("expected no task enqueued when config missing")
-	}
-	body := transport.LastBody("/sendMessage")
-	if body == "" || !strings.Contains(body, "nai.model") {
-		t.Fatalf("expected missing nai.model message, body=%s", body)
-	}
-}
-
 func TestStopCallbackCancelsTask(t *testing.T) {
 	t.Parallel()
 
@@ -838,7 +560,7 @@ func TestEditTextFallsBackToCaptionOnPhotoMessage(t *testing.T) {
 func TestNewTelegramHTTPClientWithProxy(t *testing.T) {
 	t.Parallel()
 
-	client := newTelegramHTTPClient("http://127.0.0.1:7890", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client := newTelegramHTTPClient("http://127.0.0.1:7890", 120, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("expected *http.Transport, got %T", client.Transport)
@@ -855,7 +577,7 @@ func TestNewTelegramHTTPClientWithProxy(t *testing.T) {
 	if proxyURL == nil || proxyURL.String() != "http://127.0.0.1:7890" {
 		t.Fatalf("unexpected proxy url: %v", proxyURL)
 	}
-	if client.Timeout != 60*time.Second {
+	if client.Timeout != 120*time.Second {
 		t.Fatalf("unexpected timeout: %s", client.Timeout)
 	}
 }
@@ -863,7 +585,7 @@ func TestNewTelegramHTTPClientWithProxy(t *testing.T) {
 func TestNewDirectHTTPClientDisablesProxy(t *testing.T) {
 	t.Parallel()
 
-	client := newDirectHTTPClient()
+	client := newDirectHTTPClient(75)
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok {
 		t.Fatalf("expected *http.Transport, got %T", client.Transport)
@@ -871,7 +593,7 @@ func TestNewDirectHTTPClientDisablesProxy(t *testing.T) {
 	if transport.Proxy != nil {
 		t.Fatalf("expected direct transport with no proxy, got non-nil proxy function")
 	}
-	if client.Timeout != 60*time.Second {
+	if client.Timeout != 75*time.Second {
 		t.Fatalf("unexpected timeout: %s", client.Timeout)
 	}
 }
@@ -915,7 +637,6 @@ func TestEditPhotoUsesEditMessageMedia(t *testing.T) {
 
 func newTestBot(t *testing.T) (*Bot, *mockQueue, *mockTaskStore, *mockTelegramTransport, *config.Manager) {
 	t.Helper()
-	ensureTestTelegramEnv()
 
 	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
 	cfgManager, err := config.NewManager(dbPath)
@@ -925,21 +646,6 @@ func newTestBot(t *testing.T) (*Bot, *mockQueue, *mockTaskStore, *mockTelegramTr
 	t.Cleanup(func() {
 		_ = cfgManager.Close()
 	})
-	if err := cfgManager.SetByPath("llm.base_url", "https://api.openai.com/v1"); err != nil {
-		t.Fatalf("set llm.base_url: %v", err)
-	}
-	if err := cfgManager.SetByPath("llm.api_key", "llm-key"); err != nil {
-		t.Fatalf("set llm.api_key: %v", err)
-	}
-	if err := cfgManager.SetByPath("llm.model", "gpt-4o-mini"); err != nil {
-		t.Fatalf("set llm.model: %v", err)
-	}
-	if err := cfgManager.SetByPath("nai.api_key", "nai-key"); err != nil {
-		t.Fatalf("set nai.api_key: %v", err)
-	}
-	if err := cfgManager.SetByPath("nai.model", "nai-model"); err != nil {
-		t.Fatalf("set nai.model: %v", err)
-	}
 
 	q := &mockQueue{}
 	taskStore := newMockTaskStore()
@@ -949,34 +655,6 @@ func newTestBot(t *testing.T) (*Bot, *mockQueue, *mockTaskStore, *mockTelegramTr
 	bot.httpClient = &http.Client{Transport: transport}
 	bot.llmHTTPClient = &http.Client{Transport: transport}
 	return bot, q, taskStore, transport, cfgManager
-}
-
-var telegramTestEnvOnce sync.Once
-
-func ensureTestTelegramEnv() {
-	telegramTestEnvOnce.Do(func() {
-		_ = os.Setenv(config.EnvTelegramBotToken, "token")
-		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
-		_ = os.Setenv(config.EnvTelegramProxyURL, "")
-	})
-}
-
-func getLLMModelSessionForTest(bot *Bot, userID int64) (llmModelSession, bool) {
-	bot.llmModelMu.Lock()
-	defer bot.llmModelMu.Unlock()
-	session, ok := bot.llmModelSessions[userID]
-	return session, ok
-}
-
-func expireLLMModelSessionForTest(bot *Bot, userID int64) {
-	bot.llmModelMu.Lock()
-	defer bot.llmModelMu.Unlock()
-	session, ok := bot.llmModelSessions[userID]
-	if !ok {
-		return
-	}
-	session.ExpiresAt = time.Now().Add(-time.Minute)
-	bot.llmModelSessions[userID] = session
 }
 
 type inboundRecord struct {

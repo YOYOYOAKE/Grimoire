@@ -7,9 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -489,9 +487,7 @@ func (s *stubTaskStore) ListGalleryItems(ctx context.Context, chatID, messageID 
 
 func mustConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
-	ensureTestTelegramEnv()
-
-	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	dbPath := t.TempDir() + "/grimoire.db"
 	mgr, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
@@ -499,33 +495,60 @@ func mustConfigManager(t *testing.T) *config.Manager {
 	t.Cleanup(func() {
 		_ = mgr.Close()
 	})
-	if err := mgr.SetByPath("llm.base_url", "https://example-llm.com/v1"); err != nil {
-		t.Fatalf("set llm.base_url: %v", err)
-	}
-	if err := mgr.SetByPath("llm.api_key", "llm-key"); err != nil {
-		t.Fatalf("set llm.api_key: %v", err)
-	}
-	if err := mgr.SetByPath("llm.model", "gpt-4o-mini"); err != nil {
-		t.Fatalf("set llm.model: %v", err)
-	}
-	if err := mgr.SetByPath("nai.api_key", "nai-key"); err != nil {
-		t.Fatalf("set nai.api_key: %v", err)
-	}
-	if err := mgr.SetByPath("nai.model", "nai-model"); err != nil {
-		t.Fatalf("set nai.model: %v", err)
-	}
 	if err := mgr.SetByPath("generation.artist", "artist_prefix"); err != nil {
 		t.Fatalf("set generation.artist: %v", err)
 	}
 	return mgr
 }
 
-var serviceTestEnvOnce sync.Once
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "grimoire-service-test-*")
+	if err != nil {
+		panic(err)
+	}
 
-func ensureTestTelegramEnv() {
-	serviceTestEnvOnce.Do(func() {
-		_ = os.Setenv(config.EnvTelegramBotToken, "token")
-		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
-		_ = os.Setenv(config.EnvTelegramProxyURL, "")
-	})
+	if err := os.MkdirAll(dir+"/configs", 0o755); err != nil {
+		panic(err)
+	}
+	configYAML := `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
+  proxy: ""
+  timeout_sec: 60
+llm:
+  timeout_sec: 180
+  openai_custom:
+    enable: true
+    base_url: "https://example-llm.com/v1"
+    api_key: "llm-key"
+    model: "gpt-4o-mini"
+    proxy: ""
+  openrouter:
+    enable: false
+    api_key: ""
+    model: ""
+    proxy: ""
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: "nai-key"
+  model: "nai-model"
+  timeout_sec: 180
+  proxy: ""
+`
+	if err := os.WriteFile(dir+"/configs/config.yaml", []byte(strings.TrimSpace(configYAML)+"\n"), 0o600); err != nil {
+		panic(err)
+	}
+
+	wd, err := os.Getwd()
+	if err != nil {
+		panic(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		panic(err)
+	}
+	code := m.Run()
+	_ = os.Chdir(wd)
+	_ = os.RemoveAll(dir)
+	os.Exit(code)
 }
