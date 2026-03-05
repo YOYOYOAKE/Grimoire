@@ -163,9 +163,16 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 
 	case data == cbSetLLMModel:
 		b.logger.Info("telegram callback set llm model", "chat_id", chatID, "user_id", query.From.ID)
-		b.setPendingAction(query.From.ID, pendingSetLLMModel)
-		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的 LLM 模型", false)
-		_, _ = b.sendMessage(ctx, chatID, "请发送新的 LLM 模型。\n发送 /start 取消。")
+		b.clearPendingAction(query.From.ID)
+		models, err := b.fetchLLMModels(ctx)
+		if err != nil {
+			b.logger.Warn("fetch llm models failed", "chat_id", chatID, "user_id", query.From.ID, "error", err)
+			b.fallbackLLMModelManualInput(ctx, query.ID, chatID, query.From.ID)
+			return
+		}
+		session := b.setLLMModelSession(query.From.ID, models)
+		_ = b.answerCallbackQuery(ctx, query.ID, "请选择 LLM 模型", false)
+		b.showLLMModelMenu(ctx, chatID, messageID, session, b.cfg.Snapshot().LLM.Model, 0, "")
 
 	case data == cbSetNAIAPIKey:
 		b.logger.Info("telegram callback set nai api key", "chat_id", chatID, "user_id", query.From.ID)
@@ -195,6 +202,96 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 			b.logger.Warn("edit size menu failed", "error", err)
 			_, _ = b.sendMessageWithMarkup(ctx, chatID, buildSizeMenuText(shape, size), sizeMenuMarkup())
 		}
+
+	case data == cbBackLLMMenu:
+		b.logger.Info("telegram callback back llm menu", "chat_id", chatID, "user_id", query.From.ID)
+		_ = b.answerCallbackQuery(ctx, query.ID, "已返回 LLM 设置", false)
+		snapshot := b.cfg.Snapshot()
+		text := buildMainMenuText("", snapshot.LLM.BaseURL, snapshot.LLM.Model)
+		if err := b.editMessageWithMarkup(ctx, chatID, messageID, text, mainMenuMarkup()); err != nil {
+			b.logger.Warn("edit back llm menu failed", "error", err)
+			_, _ = b.sendMessageWithMarkup(ctx, chatID, text, mainMenuMarkup())
+		}
+
+	case strings.HasPrefix(data, cbLLMModelPickPrefix):
+		sid, idx, ok := parseLLMModelSessionWithIndex(data, cbLLMModelPickPrefix)
+		if !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "操作无效，请重新点击更改模型", true)
+			return
+		}
+		session, ok := b.getLLMModelSession(query.From.ID, sid)
+		if !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "模型列表已过期，请重新点击更改模型", true)
+			return
+		}
+		if idx < 0 || idx >= len(session.Models) {
+			_ = b.answerCallbackQuery(ctx, query.ID, "操作无效，请重新点击更改模型", true)
+			return
+		}
+		selectedModel := session.Models[idx]
+		if err := b.cfg.SetByPath("llm.model", selectedModel); err != nil {
+			_ = b.answerCallbackQuery(ctx, query.ID, "设置失败", true)
+			_, _ = b.sendMessage(ctx, chatID, fmt.Sprintf("设置失败：%v", err))
+			return
+		}
+		b.clearPendingAction(query.From.ID)
+		_ = b.answerCallbackQuery(ctx, query.ID, fmt.Sprintf("已设置模型: %s", selectedModel), false)
+		snapshot := b.cfg.Snapshot()
+		text := buildMainMenuText(buildLLMModelPickedNotice(selectedModel), snapshot.LLM.BaseURL, snapshot.LLM.Model)
+		if err := b.editMessageWithMarkup(ctx, chatID, messageID, text, mainMenuMarkup()); err != nil {
+			b.logger.Warn("edit after llm model set failed", "error", err)
+			_, _ = b.sendMessageWithMarkup(ctx, chatID, text, mainMenuMarkup())
+		}
+
+	case strings.HasPrefix(data, cbLLMModelPagePrefix):
+		sid, page, ok := parseLLMModelSessionWithIndex(data, cbLLMModelPagePrefix)
+		if !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "操作无效，请重新点击更改模型", true)
+			return
+		}
+		session, ok := b.getLLMModelSession(query.From.ID, sid)
+		if !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "模型列表已过期，请重新点击更改模型", true)
+			return
+		}
+		page = clampLLMModelPage(page, len(session.Models))
+		_ = b.answerCallbackQuery(ctx, query.ID, fmt.Sprintf("第 %d 页", page+1), false)
+		b.showLLMModelMenu(ctx, chatID, messageID, session, b.cfg.Snapshot().LLM.Model, page, "")
+
+	case strings.HasPrefix(data, cbLLMModelRefreshPrefix):
+		sid, page, ok := parseLLMModelSessionWithIndex(data, cbLLMModelRefreshPrefix)
+		if !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "操作无效，请重新点击更改模型", true)
+			return
+		}
+		if _, ok := b.getLLMModelSession(query.From.ID, sid); !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "模型列表已过期，请重新点击更改模型", true)
+			return
+		}
+		models, err := b.fetchLLMModels(ctx)
+		if err != nil {
+			b.logger.Warn("refresh llm models failed", "chat_id", chatID, "user_id", query.From.ID, "error", err)
+			_ = b.answerCallbackQuery(ctx, query.ID, "刷新模型列表失败", true)
+			return
+		}
+		session := b.setLLMModelSession(query.From.ID, models)
+		page = clampLLMModelPage(page, len(models))
+		_ = b.answerCallbackQuery(ctx, query.ID, "模型列表已刷新", false)
+		b.showLLMModelMenu(ctx, chatID, messageID, session, b.cfg.Snapshot().LLM.Model, page, "模型列表已刷新。")
+
+	case strings.HasPrefix(data, cbLLMModelManualPrefix):
+		sid, ok := parseLLMModelSessionID(data, cbLLMModelManualPrefix)
+		if !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "操作无效，请重新点击更改模型", true)
+			return
+		}
+		if _, ok := b.getLLMModelSession(query.From.ID, sid); !ok {
+			_ = b.answerCallbackQuery(ctx, query.ID, "模型列表已过期，请重新点击更改模型", true)
+			return
+		}
+		b.setPendingAction(query.From.ID, pendingSetLLMModel)
+		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的 LLM 模型", false)
+		_, _ = b.sendMessage(ctx, chatID, "请发送新的 LLM 模型。\n发送 /start 取消。")
 
 	case data == cbBackImageMenu || data == cbBackMain:
 		b.logger.Info("telegram callback back image menu", "chat_id", chatID, "user_id", query.From.ID)

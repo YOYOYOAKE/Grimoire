@@ -63,6 +63,66 @@ func (b *Bot) setMyCommands(ctx context.Context) error {
 	return nil
 }
 
+func (b *Bot) fetchLLMModels(ctx context.Context) ([]string, error) {
+	cfg := b.cfg.Snapshot()
+	baseURL := strings.TrimSpace(cfg.LLM.BaseURL)
+	apiKey := strings.TrimSpace(cfg.LLM.APIKey)
+	if baseURL == "" {
+		return nil, fmt.Errorf("llm.base_url 未设置")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("llm.api_key 未设置")
+	}
+
+	endpoint := strings.TrimRight(baseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := b.llmHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求模型列表失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取模型列表响应失败: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("模型列表接口返回非 200: status=%d body=%s", resp.StatusCode, truncate(string(respBody), 300))
+	}
+
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(respBody, &payload); err != nil {
+		return nil, fmt.Errorf("解析模型列表响应失败: %w", err)
+	}
+
+	seen := make(map[string]struct{}, len(payload.Data))
+	models := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		model := strings.TrimSpace(item.ID)
+		if model == "" {
+			continue
+		}
+		if _, ok := seen[model]; ok {
+			continue
+		}
+		seen[model] = struct{}{}
+		models = append(models, model)
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("模型列表为空")
+	}
+	return models, nil
+}
+
 func (b *Bot) answerCallbackQuery(ctx context.Context, callbackID string, text string, showAlert bool) error {
 	cfg := b.cfg.Snapshot()
 	endpoint := fmt.Sprintf("%s/bot%s/answerCallbackQuery", apiBase, cfg.Telegram.BotToken)
@@ -501,5 +561,12 @@ func newTelegramHTTPClient(proxyRaw string, logger *slog.Logger) *http.Client {
 		return &http.Client{Transport: transport}
 	}
 	transport.Proxy = http.ProxyURL(parsed)
+	return &http.Client{Transport: transport}
+}
+
+func newDirectHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// LLM upstream must bypass proxy; telegram proxy only applies to Telegram API.
+	transport.Proxy = nil
 	return &http.Client{Transport: transport}
 }

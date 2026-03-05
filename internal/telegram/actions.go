@@ -123,6 +123,93 @@ func buildSizeMenuText(shape string, size string) string {
 	return fmt.Sprintf("请选择默认图像大小。\n当前: %s (%s)", shape, size)
 }
 
+func buildLLMModelMenuText(notice string, currentModel string, totalModels int, page int) string {
+	currentModel = strings.TrimSpace(currentModel)
+	currentModelDisplay := "未设置"
+	if currentModel != "" {
+		currentModelDisplay = currentModel
+	}
+	totalPages := llmModelTotalPages(totalModels)
+	page = clampLLMModelPage(page, totalModels)
+
+	menu := fmt.Sprintf("请选择 LLM 模型\n当前模型: %s\n可用模型数: %d\n页码: %d/%d", currentModelDisplay, totalModels, page+1, totalPages)
+	if strings.TrimSpace(notice) == "" {
+		return menu
+	}
+	return notice + "\n\n" + menu
+}
+
+func llmModelMenuMarkup(sessionID string, page int, models []string) *InlineKeyboardMarkup {
+	page = clampLLMModelPage(page, len(models))
+	start := page * llmModelPageSize
+	end := start + llmModelPageSize
+	if end > len(models) {
+		end = len(models)
+	}
+
+	rows := make([][]InlineKeyboardButton, 0, llmModelPageSize+3)
+	for idx := start; idx < end; idx++ {
+		rows = append(rows, []InlineKeyboardButton{
+			{
+				Text:         truncate(models[idx], 48),
+				CallbackData: fmt.Sprintf("%s%s:%d", cbLLMModelPickPrefix, sessionID, idx),
+			},
+		})
+	}
+
+	nav := make([]InlineKeyboardButton, 0, 2)
+	totalPages := llmModelTotalPages(len(models))
+	if page > 0 {
+		nav = append(nav, InlineKeyboardButton{
+			Text:         "上一页",
+			CallbackData: fmt.Sprintf("%s%s:%d", cbLLMModelPagePrefix, sessionID, page-1),
+		})
+	}
+	if page+1 < totalPages {
+		nav = append(nav, InlineKeyboardButton{
+			Text:         "下一页",
+			CallbackData: fmt.Sprintf("%s%s:%d", cbLLMModelPagePrefix, sessionID, page+1),
+		})
+	}
+	if len(nav) > 0 {
+		rows = append(rows, nav)
+	}
+
+	rows = append(rows, []InlineKeyboardButton{
+		{
+			Text:         "刷新",
+			CallbackData: fmt.Sprintf("%s%s:%d", cbLLMModelRefreshPrefix, sessionID, page),
+		},
+		{
+			Text:         "手工输入",
+			CallbackData: fmt.Sprintf("%s%s", cbLLMModelManualPrefix, sessionID),
+		},
+	})
+	rows = append(rows, []InlineKeyboardButton{
+		{Text: "返回 LLM 设置", CallbackData: cbBackLLMMenu},
+	})
+
+	return &InlineKeyboardMarkup{InlineKeyboard: rows}
+}
+
+func llmModelTotalPages(totalModels int) int {
+	if totalModels <= 0 {
+		return 1
+	}
+	return (totalModels + llmModelPageSize - 1) / llmModelPageSize
+}
+
+func clampLLMModelPage(page int, totalModels int) int {
+	totalPages := llmModelTotalPages(totalModels)
+	if page < 0 {
+		return 0
+	}
+	if page >= totalPages {
+		return totalPages - 1
+	}
+	return page
+}
+
 func (b *Bot) rememberRetryTask(task types.DrawTask) {
 	if strings.TrimSpace(task.TaskID) == "" {
 		return

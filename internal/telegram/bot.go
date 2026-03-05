@@ -18,6 +18,13 @@ const (
 	cbSetLLMBaseURL = "menu:set_llm_base_url"
 	cbSetLLMAPIKey  = "menu:set_llm_api_key"
 	cbSetLLMModel   = "menu:set_llm_model"
+	cbBackLLMMenu   = "menu:back_llm"
+
+	cbLLMModelPickPrefix    = "llm_model_pick:"
+	cbLLMModelPagePrefix    = "llm_model_page:"
+	cbLLMModelRefreshPrefix = "llm_model_refresh:"
+	cbLLMModelManualPrefix  = "llm_model_manual:"
+
 	cbSetNAIAPIKey  = "menu:set_nai_api_key"
 	cbSetNAIModel   = "menu:set_nai_model"
 	cbSetArtist     = "menu:set_artist"
@@ -30,6 +37,11 @@ const (
 	cbGalleryPrev   = "gallery_prev:"
 	cbGalleryNext   = "gallery_next:"
 	cbRetryPrefix   = "retry:"
+)
+
+const (
+	llmModelPageSize = 10
+	llmModelTTL      = 10 * time.Minute
 )
 
 type PendingAction int
@@ -54,31 +66,44 @@ type TaskController interface {
 }
 
 type Bot struct {
-	cfg          *config.Manager
-	queue        TaskQueue
-	taskStore    store.TaskStore
-	taskControl  TaskController
-	logger       *slog.Logger
-	httpClient   *http.Client
-	updateOffset int64
+	cfg           *config.Manager
+	queue         TaskQueue
+	taskStore     store.TaskStore
+	taskControl   TaskController
+	logger        *slog.Logger
+	httpClient    *http.Client
+	llmHTTPClient *http.Client
+	updateOffset  int64
 
 	pendingMu    sync.Mutex
 	pendingInput map[int64]PendingAction
 
 	retryMu   sync.Mutex
 	retryTask map[string]types.DrawTask
+
+	llmModelMu       sync.Mutex
+	llmModelSessions map[int64]llmModelSession
+	llmModelSeq      uint64
+}
+
+type llmModelSession struct {
+	SessionID string
+	Models    []string
+	ExpiresAt time.Time
 }
 
 func NewBot(cfg *config.Manager, queue TaskQueue, taskStore store.TaskStore, logger *slog.Logger) *Bot {
 	snapshot := cfg.Snapshot()
 	return &Bot{
-		cfg:          cfg,
-		queue:        queue,
-		taskStore:    taskStore,
-		logger:       logger,
-		httpClient:   newTelegramHTTPClient(snapshot.Telegram.ProxyURL, logger),
-		pendingInput: make(map[int64]PendingAction),
-		retryTask:    make(map[string]types.DrawTask),
+		cfg:              cfg,
+		queue:            queue,
+		taskStore:        taskStore,
+		logger:           logger,
+		httpClient:       newTelegramHTTPClient(snapshot.Telegram.ProxyURL, logger),
+		llmHTTPClient:    newDirectHTTPClient(),
+		pendingInput:     make(map[int64]PendingAction),
+		retryTask:        make(map[string]types.DrawTask),
+		llmModelSessions: make(map[int64]llmModelSession),
 	}
 }
 
