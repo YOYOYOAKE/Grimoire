@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -218,41 +219,34 @@ func TestTranslateSSEStyleResponse(t *testing.T) {
 
 func mustConfigManager(t *testing.T, llmURL string) *config.Manager {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `telegram:
-  bot_token: "token"
-  admin_user_id: 1
-llm:
-  base_url: "` + llmURL + `"
-  api_key: "llm-key"
-  model: "gpt-4o-mini"
-  timeout_sec: 10
-nai:
-  base_url: "https://example.com/api"
-  api_key: "nai-key"
-  model: "nai-model"
-  poll_interval_sec: 1
-generation:
-  shape_default: "square"
-  shape_map:
-    square: "1024x1024"
-    landscape: "1216x832"
-    portrait: "832x1216"
-  steps: 28
-  scale: 5
-  sampler: "k_euler"
-  n_samples: 1
-runtime:
-  worker_concurrency: 1
-  save_dir: "` + dir + `"
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	mgr, err := config.NewManager(path)
+	ensureTestTelegramEnv()
+
+	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	mgr, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = mgr.Close()
+	})
+	if err := mgr.SetByPath("llm.base_url", llmURL); err != nil {
+		t.Fatalf("set llm.base_url: %v", err)
+	}
+	if err := mgr.SetByPath("llm.api_key", "llm-key"); err != nil {
+		t.Fatalf("set llm.api_key: %v", err)
+	}
+	if err := mgr.SetByPath("llm.model", "gpt-4o-mini"); err != nil {
+		t.Fatalf("set llm.model: %v", err)
+	}
 	return mgr
+}
+
+var llmTestEnvOnce sync.Once
+
+func ensureTestTelegramEnv() {
+	llmTestEnvOnce.Do(func() {
+		_ = os.Setenv(config.EnvTelegramBotToken, "token")
+		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
+		_ = os.Setenv(config.EnvTelegramProxyURL, "")
+	})
 }

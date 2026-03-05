@@ -112,6 +112,11 @@ func (b *Bot) handleMessage(ctx context.Context, msg Message) {
 		return
 	}
 
+	if missing := b.cfg.MissingDrawConfigKeys(); len(missing) > 0 {
+		_, _ = b.sendMessage(ctx, msg.Chat.ID, buildMissingDrawConfigText(missing))
+		return
+	}
+
 	b.enqueueDrawTask(ctx, msg, text)
 }
 
@@ -223,6 +228,11 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		originTaskID := strings.TrimPrefix(data, cbRegenPrefix)
 		if strings.HasPrefix(data, cbRetryPrefix) {
 			originTaskID = strings.TrimPrefix(data, cbRetryPrefix)
+		}
+		if missing := b.cfg.MissingDrawConfigKeys(); len(missing) > 0 {
+			_ = b.answerCallbackQuery(ctx, query.ID, "缺少绘图配置", true)
+			_, _ = b.sendMessage(ctx, chatID, buildMissingDrawConfigText(missing))
+			return
 		}
 		b.logger.Info("telegram callback regen task", "chat_id", chatID, "user_id", query.From.ID, "origin_task_id", originTaskID)
 		originTask, ok := b.getRetryTask(ctx, originTaskID)
@@ -451,4 +461,11 @@ func (b *Bot) getPendingAction(userID int64) PendingAction {
 
 func (b *Bot) clearPendingAction(userID int64) {
 	b.setPendingAction(userID, pendingNone)
+}
+
+func buildMissingDrawConfigText(missing []string) string {
+	if len(missing) == 0 {
+		return "配置完整。"
+	}
+	return fmt.Sprintf("当前缺少绘图配置：\n- %s\n\n请使用 /llm 和 /nai 完成设置后再试。", strings.Join(missing, "\n- "))
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,24 +20,27 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "/home/YOAKE/dev/Grimoire/configs/config.yaml", "配置文件路径")
-	flag.Parse()
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	sqlitePath := config.DefaultSQLitePath
 
-	cfgManager, err := config.NewManager(*configPath)
+	cfgManager, err := config.NewManager(sqlitePath)
 	if err != nil {
-		logger.Error("加载配置失败", "path", *configPath, "error", err)
+		logger.Error("加载配置失败", "sqlite_path", sqlitePath, "error", err)
 		fmt.Fprintf(os.Stderr, "配置加载失败：%v\n", err)
 		os.Exit(1)
 	}
+	defer func() {
+		if err := cfgManager.Close(); err != nil {
+			logger.Warn("关闭配置数据库失败", "error", err)
+		}
+	}()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	taskStore, err := sqlite.NewTaskStore(cfgManager.Snapshot().Runtime.SQLitePath)
+	taskStore, err := sqlite.NewTaskStore(sqlitePath)
 	if err != nil {
-		logger.Error("初始化 SQLite 失败", "path", cfgManager.Snapshot().Runtime.SQLitePath, "error", err)
+		logger.Error("初始化 SQLite 失败", "path", sqlitePath, "error", err)
 		fmt.Fprintf(os.Stderr, "SQLite 初始化失败：%v\n", err)
 		os.Exit(1)
 	}
@@ -57,7 +59,7 @@ func main() {
 	naiClient := nai.NewXianyunClient(cfgManager, logger)
 
 	var orchestrator *service.Orchestrator
-	worker := queue.NewWorker(cfgManager.Snapshot().Runtime.WorkerConcurrency, func(ctx context.Context, task types.DrawTask) {
+	worker := queue.NewWorker(1, func(ctx context.Context, task types.DrawTask) {
 		if orchestrator == nil {
 			logger.Error("orchestrator 未初始化")
 			return
@@ -71,7 +73,7 @@ func main() {
 
 	worker.Start(ctx)
 	recoverTasks(ctx, taskStore, worker, logger)
-	logger.Info("grimoire bot started", "config", cfgManager.Path())
+	logger.Info("grimoire bot started", "sqlite_path", cfgManager.Path())
 
 	if err := bot.Run(ctx); err != nil {
 		logger.Error("bot 运行失败", "error", err)

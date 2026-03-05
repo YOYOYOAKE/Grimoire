@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -325,43 +326,43 @@ func (s *stubTaskStore) ListGalleryItems(ctx context.Context, chatID, messageID 
 
 func mustConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `telegram:
-  bot_token: "token"
-  admin_user_id: 1
-llm:
-  base_url: "https://example-llm.com/v1"
-  api_key: "llm-key"
-  model: "gpt-4o-mini"
-  timeout_sec: 10
-nai:
-  base_url: "https://example.com/api"
-  api_key: "nai-key"
-  model: "nai-model"
-  poll_interval_sec: 1
-generation:
-  shape_default: "square"
-  artist: "artist_prefix"
-  shape_map:
-    square: "1024x1024"
-    landscape: "1216x832"
-    portrait: "832x1216"
-  steps: 28
-  scale: 5
-  sampler: "k_euler"
-  n_samples: 1
-runtime:
-  worker_concurrency: 1
-  save_dir: "` + dir + `"
-  sqlite_path: "` + filepath.Join(dir, "grimoire.db") + `"
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	mgr, err := config.NewManager(path)
+	ensureTestTelegramEnv()
+
+	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	mgr, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = mgr.Close()
+	})
+	if err := mgr.SetByPath("llm.base_url", "https://example-llm.com/v1"); err != nil {
+		t.Fatalf("set llm.base_url: %v", err)
+	}
+	if err := mgr.SetByPath("llm.api_key", "llm-key"); err != nil {
+		t.Fatalf("set llm.api_key: %v", err)
+	}
+	if err := mgr.SetByPath("llm.model", "gpt-4o-mini"); err != nil {
+		t.Fatalf("set llm.model: %v", err)
+	}
+	if err := mgr.SetByPath("nai.api_key", "nai-key"); err != nil {
+		t.Fatalf("set nai.api_key: %v", err)
+	}
+	if err := mgr.SetByPath("nai.model", "nai-model"); err != nil {
+		t.Fatalf("set nai.model: %v", err)
+	}
+	if err := mgr.SetByPath("generation.artist", "artist_prefix"); err != nil {
+		t.Fatalf("set generation.artist: %v", err)
+	}
 	return mgr
+}
+
+var serviceTestEnvOnce sync.Once
+
+func ensureTestTelegramEnv() {
+	serviceTestEnvOnce.Do(func() {
+		_ = os.Setenv(config.EnvTelegramBotToken, "token")
+		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
+		_ = os.Setenv(config.EnvTelegramProxyURL, "")
+	})
 }

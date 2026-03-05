@@ -69,6 +69,31 @@ func TestHandleMessageFreeTextRepliesToOriginalMessage(t *testing.T) {
 	}
 }
 
+func TestHandleMessageFreeTextBlockedWhenConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	bot, q, _, transport, cfg := newTestBot(t)
+	if err := cfg.SetByPath("llm.api_key", ""); err != nil {
+		t.Fatalf("clear llm.api_key: %v", err)
+	}
+
+	msg := Message{
+		MessageID: 556,
+		From:      &User{ID: cfg.Snapshot().Telegram.AdminUserID},
+		Chat:      Chat{ID: 1001},
+		Text:      "来一张可爱猫娘",
+	}
+	bot.handleMessage(context.Background(), msg)
+
+	if len(q.Tasks()) != 0 {
+		t.Fatalf("expected no task enqueued when config missing")
+	}
+	body := transport.LastBody("/sendMessage")
+	if body == "" || !strings.Contains(body, "缺少绘图配置") || !strings.Contains(body, "llm.api_key") {
+		t.Fatalf("expected missing config message, body=%s", body)
+	}
+}
+
 func TestStartClearsPendingAction(t *testing.T) {
 	t.Parallel()
 
@@ -498,6 +523,41 @@ func TestLegacyRetryCallbackStillWorks(t *testing.T) {
 	}
 }
 
+func TestRegenCallbackBlockedWhenConfigMissing(t *testing.T) {
+	t.Parallel()
+
+	bot, q, _, transport, cfg := newTestBot(t)
+	adminID := cfg.Snapshot().Telegram.AdminUserID
+
+	if err := cfg.SetByPath("nai.model", ""); err != nil {
+		t.Fatalf("clear nai.model: %v", err)
+	}
+
+	bot.rememberRetryTask(types.DrawTask{
+		TaskID: "task-000007",
+		Prompt: "retry me",
+		Shape:  "square",
+	})
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "retry-cb-missing",
+		From: User{ID: adminID},
+		Message: &Message{
+			MessageID: 303,
+			Chat:      Chat{ID: 1001},
+		},
+		Data: "regen:task-000007",
+	})
+
+	if len(q.Tasks()) != 0 {
+		t.Fatalf("expected no task enqueued when config missing")
+	}
+	body := transport.LastBody("/sendMessage")
+	if body == "" || !strings.Contains(body, "nai.model") {
+		t.Fatalf("expected missing nai.model message, body=%s", body)
+	}
+}
+
 func TestStopCallbackCancelsTask(t *testing.T) {
 	t.Parallel()
 
@@ -650,45 +710,30 @@ func TestEditPhotoUsesEditMessageMedia(t *testing.T) {
 
 func newTestBot(t *testing.T) (*Bot, *mockQueue, *mockTaskStore, *mockTelegramTransport, *config.Manager) {
 	t.Helper()
+	ensureTestTelegramEnv()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `telegram:
-  bot_token: "token"
-  admin_user_id: 1
-llm:
-  base_url: "https://api.openai.com/v1"
-  api_key: "llm-key"
-  model: "gpt-4o-mini"
-  timeout_sec: 10
-nai:
-  base_url: "https://example.com/api"
-  api_key: "nai-key"
-  model: "nai-model"
-  poll_interval_sec: 1
-generation:
-  shape_default: "square"
-  artist: ""
-  shape_map:
-    square: "1024x1024"
-    landscape: "1216x832"
-    portrait: "832x1216"
-  steps: 28
-  scale: 5
-  sampler: "k_euler"
-  n_samples: 1
-runtime:
-  worker_concurrency: 1
-  save_dir: "` + dir + `"
-  sqlite_path: "` + filepath.Join(dir, "grimoire.db") + `"
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-
-	cfgManager, err := config.NewManager(path)
+	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	cfgManager, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = cfgManager.Close()
+	})
+	if err := cfgManager.SetByPath("llm.base_url", "https://api.openai.com/v1"); err != nil {
+		t.Fatalf("set llm.base_url: %v", err)
+	}
+	if err := cfgManager.SetByPath("llm.api_key", "llm-key"); err != nil {
+		t.Fatalf("set llm.api_key: %v", err)
+	}
+	if err := cfgManager.SetByPath("llm.model", "gpt-4o-mini"); err != nil {
+		t.Fatalf("set llm.model: %v", err)
+	}
+	if err := cfgManager.SetByPath("nai.api_key", "nai-key"); err != nil {
+		t.Fatalf("set nai.api_key: %v", err)
+	}
+	if err := cfgManager.SetByPath("nai.model", "nai-model"); err != nil {
+		t.Fatalf("set nai.model: %v", err)
 	}
 
 	q := &mockQueue{}
@@ -698,6 +743,16 @@ runtime:
 	bot := NewBot(cfgManager, q, taskStore, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	bot.httpClient = &http.Client{Transport: transport}
 	return bot, q, taskStore, transport, cfgManager
+}
+
+var telegramTestEnvOnce sync.Once
+
+func ensureTestTelegramEnv() {
+	telegramTestEnvOnce.Do(func() {
+		_ = os.Setenv(config.EnvTelegramBotToken, "token")
+		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
+		_ = os.Setenv(config.EnvTelegramProxyURL, "")
+	})
 }
 
 type inboundRecord struct {

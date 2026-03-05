@@ -1,153 +1,129 @@
 package config
 
 import (
-	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
-const sampleConfigYAML = `telegram:
-  bot_token: "token"
-  admin_user_id: 123
-llm:
-  base_url: "https://api.openai.com/v1"
-  api_key: "old-llm-key"
-  model: "gpt-4o-mini"
-  timeout_sec: 30
-nai:
-  base_url: "https://image.idlecloud.cc/api"
-  api_key: "nai-key"
-  model: "nai-diffusion-4-5-full"
-  poll_interval_sec: 5
-generation:
-  shape_default: "square"
-  artist: ""
-  shape_map:
-    square: "1024x1024"
-    landscape: "1216x832"
-    portrait: "832x1216"
-  steps: 28
-  scale: 5
-  sampler: "k_euler"
-  n_samples: 1
-runtime:
-  worker_concurrency: 1
-  save_dir: "/tmp/images"
-  sqlite_path: "/tmp/grimoire.db"
-`
+func TestNewManagerRequiresTelegramEnv(t *testing.T) {
+	t.Setenv(EnvTelegramBotToken, "")
+	t.Setenv(EnvTelegramAdminUserID, "")
+	t.Setenv(EnvTelegramProxyURL, "")
 
-func TestManagerSetByPathWritesAndReloads(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(sampleConfigYAML), 0o600); err != nil {
-		t.Fatalf("write initial config: %v", err)
+	_, err := NewManager(filepath.Join(t.TempDir(), "grimoire.db"))
+	if err == nil {
+		t.Fatalf("expected env validation error")
 	}
-
-	m, err := NewManager(path)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
-
-	if err := m.SetByPath("llm.api_key", "new-llm-key"); err != nil {
-		t.Fatalf("SetByPath: %v", err)
-	}
-
-	snapshot := m.Snapshot()
-	if snapshot.LLM.APIKey != "new-llm-key" {
-		t.Fatalf("expected in-memory API key updated, got %q", snapshot.LLM.APIKey)
-	}
-
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read config file: %v", err)
-	}
-	if !strings.Contains(string(content), "new-llm-key") {
-		t.Fatalf("expected file contains updated API key, content=%s", string(content))
-	}
-
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat config file: %v", err)
-	}
-	if info.Mode().Perm() != 0o600 {
-		t.Fatalf("expected file perm 0600, got %o", info.Mode().Perm())
+	if !strings.Contains(err.Error(), EnvTelegramBotToken) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestManagerSetShapeDefault(t *testing.T) {
-	t.Parallel()
+func TestManagerLoadsWithEnvAndAllowsMissingDrawConfig(t *testing.T) {
+	setRequiredTelegramEnv(t)
+	mgr := mustNewManager(t, filepath.Join(t.TempDir(), "grimoire.db"))
+	defer func() { _ = mgr.Close() }()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(sampleConfigYAML), 0o600); err != nil {
-		t.Fatalf("write initial config: %v", err)
+	snapshot := mgr.Snapshot()
+	if snapshot.Telegram.BotToken != "token" {
+		t.Fatalf("unexpected bot token: %q", snapshot.Telegram.BotToken)
 	}
-
-	m, err := NewManager(path)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
+	if snapshot.Telegram.AdminUserID != 123 {
+		t.Fatalf("unexpected admin id: %d", snapshot.Telegram.AdminUserID)
 	}
-
-	if err := m.SetByPath("generation.shape_default", "portrait"); err != nil {
-		t.Fatalf("SetByPath portrait: %v", err)
+	if snapshot.NAI.BaseURL != "https://image.idlecloud.cc/api" {
+		t.Fatalf("unexpected nai base url: %q", snapshot.NAI.BaseURL)
 	}
-	if got := m.Snapshot().Generation.ShapeDefault; got != "portrait" {
-		t.Fatalf("expected portrait, got %q", got)
+	if snapshot.Generation.ShapeDefault != "square" {
+		t.Fatalf("unexpected shape default: %q", snapshot.Generation.ShapeDefault)
 	}
-
-	if err := m.SetByPath("generation.shape_default", "unknown-shape"); err == nil {
-		t.Fatalf("expected error for invalid shape default")
+	missing := mgr.MissingDrawConfigKeys()
+	expected := []string{"llm.base_url", "llm.api_key", "llm.model", "nai.api_key", "nai.model"}
+	if !reflect.DeepEqual(missing, expected) {
+		t.Fatalf("unexpected missing keys: got=%v want=%v", missing, expected)
 	}
 }
 
-func TestManagerSetArtist(t *testing.T) {
-	t.Parallel()
+func TestManagerSetByPathPersistsAndReloads(t *testing.T) {
+	setRequiredTelegramEnv(t)
+	path := filepath.Join(t.TempDir(), "grimoire.db")
+	mgr := mustNewManager(t, path)
+	defer func() { _ = mgr.Close() }()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(sampleConfigYAML), 0o600); err != nil {
-		t.Fatalf("write initial config: %v", err)
+	updates := map[string]string{
+		"llm.base_url":             "https://example-llm.com/v1/",
+		"llm.api_key":              "llm-key",
+		"llm.model":                "gpt-4.1-mini",
+		"nai.api_key":              "nai-key",
+		"nai.model":                "nai-model",
+		"generation.shape_default": "portrait",
+		"generation.artist":        "artist:a, artist:b",
+	}
+	for path, value := range updates {
+		if err := mgr.SetByPath(path, value); err != nil {
+			t.Fatalf("SetByPath(%s) error: %v", path, err)
+		}
+	}
+	if missing := mgr.MissingDrawConfigKeys(); len(missing) != 0 {
+		t.Fatalf("expected missing keys resolved, got %v", missing)
 	}
 
-	m, err := NewManager(path)
-	if err != nil {
-		t.Fatalf("NewManager: %v", err)
-	}
+	_ = mgr.Close()
+	reloaded := mustNewManager(t, path)
+	defer func() { _ = reloaded.Close() }()
 
-	value := "artist:kuon, artist:foo"
-	if err := m.SetByPath("generation.artist", value); err != nil {
-		t.Fatalf("SetByPath generation.artist: %v", err)
+	cfg := reloaded.Snapshot()
+	if cfg.LLM.BaseURL != "https://example-llm.com/v1" {
+		t.Fatalf("unexpected llm base url: %q", cfg.LLM.BaseURL)
 	}
-	if got := m.Snapshot().Generation.Artist; got != value {
-		t.Fatalf("unexpected artist: %q", got)
+	if cfg.LLM.APIKey != "llm-key" || cfg.LLM.Model != "gpt-4.1-mini" {
+		t.Fatalf("unexpected llm config: %+v", cfg.LLM)
+	}
+	if cfg.NAI.APIKey != "nai-key" || cfg.NAI.Model != "nai-model" {
+		t.Fatalf("unexpected nai config: %+v", cfg.NAI)
+	}
+	if cfg.Generation.ShapeDefault != "portrait" {
+		t.Fatalf("unexpected shape default: %q", cfg.Generation.ShapeDefault)
+	}
+	if cfg.Generation.Artist != "artist:a, artist:b" {
+		t.Fatalf("unexpected artist: %q", cfg.Generation.Artist)
 	}
 }
 
-func TestManagerSetTelegramProxyURL(t *testing.T) {
-	t.Parallel()
+func TestManagerSetShapeDefaultValidation(t *testing.T) {
+	setRequiredTelegramEnv(t)
+	mgr := mustNewManager(t, filepath.Join(t.TempDir(), "grimoire.db"))
+	defer func() { _ = mgr.Close() }()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(sampleConfigYAML), 0o600); err != nil {
-		t.Fatalf("write initial config: %v", err)
+	if err := mgr.SetByPath("generation.shape_default", "invalid-shape"); err == nil {
+		t.Fatalf("expected invalid shape error")
 	}
+}
 
-	m, err := NewManager(path)
+func TestManagerSetUnsupportedPath(t *testing.T) {
+	setRequiredTelegramEnv(t)
+	mgr := mustNewManager(t, filepath.Join(t.TempDir(), "grimoire.db"))
+	defer func() { _ = mgr.Close() }()
+
+	if err := mgr.SetByPath("nai.base_url", "https://example.com/api"); err == nil {
+		t.Fatalf("expected unsupported path error")
+	}
+}
+
+func setRequiredTelegramEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(EnvTelegramBotToken, "token")
+	t.Setenv(EnvTelegramAdminUserID, "123")
+	t.Setenv(EnvTelegramProxyURL, "")
+}
+
+func mustNewManager(t *testing.T, path string) *Manager {
+	t.Helper()
+	mgr, err := NewManager(path)
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
-
-	if err := m.SetByPath("telegram.proxy_url", "http://127.0.0.1:7890"); err != nil {
-		t.Fatalf("SetByPath telegram.proxy_url: %v", err)
-	}
-	if got := m.Snapshot().Telegram.ProxyURL; got != "http://127.0.0.1:7890" {
-		t.Fatalf("unexpected proxy url: %q", got)
-	}
-
-	if err := m.SetByPath("telegram.proxy_url", "://bad-proxy"); err == nil {
-		t.Fatalf("expected invalid proxy url error")
-	}
+	return mgr
 }

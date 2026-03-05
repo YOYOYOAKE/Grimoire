@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -23,13 +25,13 @@ func TestSubmitAndPollCompleted(t *testing.T) {
 	var submitBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/generate_image":
+		case r.Method == http.MethodPost && r.URL.Path == "/api/generate_image":
 			raw, _ := io.ReadAll(r.Body)
 			_ = r.Body.Close()
 			_ = json.Unmarshal(raw, &submitBody)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"job_id":"job-123"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/get_result/job-123":
+		case r.Method == http.MethodGet && r.URL.Path == "/api/get_result/job-123":
 			count := pollCount.Add(1)
 			w.Header().Set("Content-Type", "application/json")
 			if count == 1 {
@@ -44,7 +46,8 @@ func TestSubmitAndPollCompleted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewXianyunClient(mustConfigManager(t, srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client := NewXianyunClient(mustConfigManager(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 	jobID, err := client.Submit(t.Context(), types.GenerateRequest{
 		PositivePrompt: "1girl",
 		NegativePrompt: "lowres",
@@ -90,7 +93,7 @@ func TestPollFailedStatus(t *testing.T) {
 	t.Parallel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/get_result/job-failed" {
+		if r.URL.Path != "/api/get_result/job-failed" {
 			http.NotFound(w, r)
 			return
 		}
@@ -99,7 +102,8 @@ func TestPollFailedStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewXianyunClient(mustConfigManager(t, srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client := NewXianyunClient(mustConfigManager(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 	out, err := client.Poll(t.Context(), "job-failed")
 	if err != nil {
 		t.Fatalf("Poll error: %v", err)
@@ -117,7 +121,8 @@ func TestPollHTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewXianyunClient(mustConfigManager(t, srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client := NewXianyunClient(mustConfigManager(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 	_, err := client.Poll(t.Context(), "job-err")
 	if err == nil {
 		t.Fatalf("expected error")
@@ -129,7 +134,7 @@ func TestSubmitWithCharacterPayloads(t *testing.T) {
 
 	var submitBody map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost && r.URL.Path == "/generate_image" {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/generate_image" {
 			raw, _ := io.ReadAll(r.Body)
 			_ = r.Body.Close()
 			_ = json.Unmarshal(raw, &submitBody)
@@ -141,7 +146,8 @@ func TestSubmitWithCharacterPayloads(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewXianyunClient(mustConfigManager(t, srv.URL), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	client := NewXianyunClient(mustConfigManager(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	routeClientToServer(t, client, srv)
 	_, err := client.Submit(t.Context(), types.GenerateRequest{
 		PositivePrompt: "global",
 		NegativePrompt: "global_uc",
@@ -188,43 +194,56 @@ func TestSubmitWithCharacterPayloads(t *testing.T) {
 	}
 }
 
-func mustConfigManager(t *testing.T, naiURL string) *config.Manager {
+func mustConfigManager(t *testing.T) *config.Manager {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `telegram:
-  bot_token: "token"
-  admin_user_id: 1
-llm:
-  base_url: "https://example-llm.com/v1"
-  api_key: "llm-key"
-  model: "gpt-4o-mini"
-  timeout_sec: 10
-nai:
-  base_url: "` + naiURL + `"
-  api_key: "nai-key"
-  model: "nai-model"
-  poll_interval_sec: 1
-generation:
-  shape_default: "square"
-  shape_map:
-    square: "1024x1024"
-    landscape: "1216x832"
-    portrait: "832x1216"
-  steps: 28
-  scale: 5
-  sampler: "k_euler"
-  n_samples: 1
-runtime:
-  worker_concurrency: 1
-  save_dir: "` + dir + `"
-`
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	mgr, err := config.NewManager(path)
+	ensureTestTelegramEnv()
+
+	dbPath := filepath.Join(t.TempDir(), "grimoire.db")
+	mgr, err := config.NewManager(dbPath)
 	if err != nil {
 		t.Fatalf("new manager: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = mgr.Close()
+	})
+	if err := mgr.SetByPath("nai.api_key", "nai-key"); err != nil {
+		t.Fatalf("set nai.api_key: %v", err)
+	}
+	if err := mgr.SetByPath("nai.model", "nai-model"); err != nil {
+		t.Fatalf("set nai.model: %v", err)
+	}
 	return mgr
+}
+
+func routeClientToServer(t *testing.T, client *XianyunClient, srv *httptest.Server) {
+	t.Helper()
+	targetURL, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("parse test server url: %v", err)
+	}
+	baseRT := srv.Client().Transport
+	client.httpClient = &http.Client{
+		Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+			clone := req.Clone(req.Context())
+			clone.URL.Scheme = targetURL.Scheme
+			clone.URL.Host = targetURL.Host
+			return baseRT.RoundTrip(clone)
+		}),
+	}
+}
+
+type roundTripperFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+var naiTestEnvOnce sync.Once
+
+func ensureTestTelegramEnv() {
+	naiTestEnvOnce.Do(func() {
+		_ = os.Setenv(config.EnvTelegramBotToken, "token")
+		_ = os.Setenv(config.EnvTelegramAdminUserID, "1")
+		_ = os.Setenv(config.EnvTelegramProxyURL, "")
+	})
 }

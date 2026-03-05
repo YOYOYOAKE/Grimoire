@@ -54,3 +54,9 @@ CREATE TABLE IF NOT EXISTS gallery_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_gallery_chat_message_id ON gallery_items(chat_id, message_id, id);
+
+CREATE TABLE IF NOT EXISTS app_config (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at DATETIME NOT NULL
+);

@@ -6,7 +6,10 @@ After=network.target
 Type=simple
 User=YOAKE
 WorkingDirectory=/home/YOAKE/dev/Grimoire
-ExecStart=/home/YOAKE/dev/Grimoire/bin/grimoire-bot -config /home/YOAKE/dev/Grimoire/configs/config.yaml
+Environment=GRIMOIRE_TELEGRAM_BOT_TOKEN=replace-with-your-bot-token
+Environment=GRIMOIRE_TELEGRAM_ADMIN_USER_ID=replace-with-your-admin-id
+# Environment=GRIMOIRE_TELEGRAM_PROXY_URL=http://127.0.0.1:7890
+ExecStart=/home/YOAKE/dev/Grimoire/bin/grimoire-bot
 Restart=always
 RestartSec=3
 
