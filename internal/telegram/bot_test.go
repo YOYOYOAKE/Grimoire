@@ -855,6 +855,9 @@ func TestNewTelegramHTTPClientWithProxy(t *testing.T) {
 	if proxyURL == nil || proxyURL.String() != "http://127.0.0.1:7890" {
 		t.Fatalf("unexpected proxy url: %v", proxyURL)
 	}
+	if client.Timeout != 60*time.Second {
+		t.Fatalf("unexpected timeout: %s", client.Timeout)
+	}
 }
 
 func TestNewDirectHTTPClientDisablesProxy(t *testing.T) {
@@ -867,6 +870,9 @@ func TestNewDirectHTTPClientDisablesProxy(t *testing.T) {
 	}
 	if transport.Proxy != nil {
 		t.Fatalf("expected direct transport with no proxy, got non-nil proxy function")
+	}
+	if client.Timeout != 60*time.Second {
+		t.Fatalf("unexpected timeout: %s", client.Timeout)
 	}
 }
 

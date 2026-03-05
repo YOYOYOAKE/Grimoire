@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"grimoire/internal/config"
 	"grimoire/internal/store"
@@ -18,6 +19,9 @@ type Orchestrator struct {
 	cfg        *config.Manager
 	taskStore  store.TaskStore
 	logger     *slog.Logger
+
+	processingWarningAfter time.Duration
+	pollIntervalOverride   time.Duration
 
 	mu             sync.Mutex
 	activeCancels  map[string]context.CancelFunc
@@ -33,14 +37,15 @@ func NewOrchestrator(
 	logger *slog.Logger,
 ) *Orchestrator {
 	return &Orchestrator{
-		translator:     translator,
-		generator:      generator,
-		notifier:       notifier,
-		cfg:            cfg,
-		taskStore:      taskStore,
-		logger:         logger,
-		activeCancels:  make(map[string]context.CancelFunc),
-		pendingCancels: make(map[string]struct{}),
+		translator:             translator,
+		generator:              generator,
+		notifier:               notifier,
+		cfg:                    cfg,
+		taskStore:              taskStore,
+		logger:                 logger,
+		processingWarningAfter: 3 * time.Minute,
+		activeCancels:          make(map[string]context.CancelFunc),
+		pendingCancels:         make(map[string]struct{}),
 	}
 }
 

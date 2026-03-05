@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"grimoire/internal/config"
 	"grimoire/internal/types"
@@ -191,6 +192,15 @@ func TestSubmitWithCharacterPayloads(t *testing.T) {
 	center, _ := firstChar["center"].(map[string]any)
 	if center["x"] != 0.1 || center["y"] != 0.7 {
 		t.Fatalf("unexpected center: %#v", center)
+	}
+}
+
+func TestNewXianyunClientSetsHTTPTimeout(t *testing.T) {
+	t.Parallel()
+
+	client := NewXianyunClient(mustConfigManager(t), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if client.httpClient.Timeout != 60*time.Second {
+		t.Fatalf("unexpected timeout: %s", client.httpClient.Timeout)
 	}
 }
 

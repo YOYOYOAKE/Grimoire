@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,6 +204,113 @@ func TestCancelTaskBeforeProcessSkipsExecution(t *testing.T) {
 	}
 }
 
+func TestCancelTaskDuringPollWaitMarksCancelled(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustConfigManager(t)
+	translator := &stubTranslator{}
+	generator := &cancelDuringPollWaitGenerator{firstPollDone: make(chan struct{})}
+	notifier := &stubNotifier{}
+	taskStore := &stubTaskStore{}
+
+	orch := NewOrchestrator(
+		translator,
+		generator,
+		notifier,
+		cfg,
+		taskStore,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+
+	done := make(chan struct{})
+	go func() {
+		orch.ProcessTask(context.Background(), types.DrawTask{
+			TaskID:          "task-000777",
+			ChatID:          1,
+			UserID:          1,
+			StatusMessageID: 99,
+			Shape:           "square",
+			ResumeJobID:     "job-cancel",
+		})
+		close(done)
+	}()
+
+	select {
+	case <-generator.firstPollDone:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting first poll")
+	}
+
+	if !orch.CancelTask("task-000777") {
+		t.Fatal("expected cancel request accepted")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timeout waiting task exit")
+	}
+
+	if taskStore.lastStatus != "cancelled" {
+		t.Fatalf("expected cancelled status persisted, got %q", taskStore.lastStatus)
+	}
+	if countTextsContaining(notifier.allTexts(), "状态: cancelled") == 0 {
+		t.Fatalf("expected cancelled status notification, got=%v", notifier.allTexts())
+	}
+}
+
+func TestProcessingOver3MinutesWarnsOnceAndContinues(t *testing.T) {
+	t.Parallel()
+
+	cfg := mustConfigManager(t)
+	translator := &stubTranslator{}
+	generator := &processingThenFailGenerator{processingPolls: 4}
+	notifier := &stubNotifier{}
+	taskStore := &stubTaskStore{}
+
+	orch := NewOrchestrator(
+		translator,
+		generator,
+		notifier,
+		cfg,
+		taskStore,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	orch.pollIntervalOverride = 10 * time.Millisecond
+	orch.processingWarningAfter = 25 * time.Millisecond
+
+	orch.ProcessTask(context.Background(), types.DrawTask{
+		TaskID:          "task-000778",
+		ChatID:          1,
+		UserID:          1,
+		StatusMessageID: 100,
+		Shape:           "square",
+		ResumeJobID:     "job-processing",
+	})
+
+	texts := notifier.allTexts()
+	warnCount := countTextsContaining(texts, "任务可能失败，系统继续轮询")
+	if warnCount != 1 {
+		t.Fatalf("expected warning once, got=%d texts=%v", warnCount, texts)
+	}
+	if taskStore.lastStatus != types.StatusFailed {
+		t.Fatalf("expected task ended by generator failure, got %q", taskStore.lastStatus)
+	}
+	if generator.pollCalls.Load() < 5 {
+		t.Fatalf("expected polling continued after warning, poll_calls=%d", generator.pollCalls.Load())
+	}
+}
+
+func countTextsContaining(texts []string, needle string) int {
+	count := 0
+	for _, text := range texts {
+		if strings.Contains(text, needle) {
+			count++
+		}
+	}
+	return count
+}
+
 type stubTranslator struct {
 	result types.TranslationResult
 	err    error
@@ -260,16 +369,63 @@ func (g *resumeGenerator) Poll(ctx context.Context, jobID string) (types.JobResu
 	}, nil
 }
 
+type cancelDuringPollWaitGenerator struct {
+	firstPollDone chan struct{}
+}
+
+func (g *cancelDuringPollWaitGenerator) Submit(ctx context.Context, req types.GenerateRequest) (string, error) {
+	return "unexpected", nil
+}
+
+func (g *cancelDuringPollWaitGenerator) Poll(ctx context.Context, jobID string) (types.JobResult, error) {
+	select {
+	case <-g.firstPollDone:
+	default:
+		close(g.firstPollDone)
+	}
+	return types.JobResult{
+		Status:        types.StatusQueued,
+		QueuePosition: 1,
+	}, nil
+}
+
+type processingThenFailGenerator struct {
+	processingPolls int32
+	pollCalls       atomic.Int32
+}
+
+func (g *processingThenFailGenerator) Submit(ctx context.Context, req types.GenerateRequest) (string, error) {
+	return "unexpected", nil
+}
+
+func (g *processingThenFailGenerator) Poll(ctx context.Context, jobID string) (types.JobResult, error) {
+	call := g.pollCalls.Add(1)
+	if call <= g.processingPolls {
+		return types.JobResult{
+			Status:        types.StatusProcessing,
+			QueuePosition: 1,
+		}, nil
+	}
+	return types.JobResult{
+		Status: types.StatusFailed,
+		Error:  "forced failure",
+	}, nil
+}
+
 type stubNotifier struct {
 	editPhotoCalls   int
 	notifyPhotoCalls int
+	notifyTexts      []string
+	editTexts        []string
 }
 
 func (s *stubNotifier) NotifyText(ctx context.Context, chatID int64, text string) (int64, error) {
+	s.notifyTexts = append(s.notifyTexts, text)
 	return 1, nil
 }
 
 func (s *stubNotifier) EditText(ctx context.Context, chatID int64, messageID int64, text string) error {
+	s.editTexts = append(s.editTexts, text)
 	return nil
 }
 
@@ -281,6 +437,13 @@ func (s *stubNotifier) EditPhoto(ctx context.Context, chatID int64, messageID in
 func (s *stubNotifier) NotifyPhoto(ctx context.Context, chatID int64, filePath string, caption string) error {
 	s.notifyPhotoCalls++
 	return nil
+}
+
+func (s *stubNotifier) allTexts() []string {
+	out := make([]string, 0, len(s.notifyTexts)+len(s.editTexts))
+	out = append(out, s.notifyTexts...)
+	out = append(out, s.editTexts...)
+	return out
 }
 
 type stubTaskStore struct {

@@ -118,10 +118,19 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 
 	lastQueuePos := -1
 	lastStatus := ""
+	processingSince := time.Time{}
+	processingWarned := false
 
-	pollEvery := time.Duration(o.cfg.Snapshot().NAI.PollIntervalSec) * time.Second
+	pollEvery := o.pollIntervalOverride
+	if pollEvery <= 0 {
+		pollEvery = time.Duration(o.cfg.Snapshot().NAI.PollIntervalSec) * time.Second
+	}
 	if pollEvery <= 0 {
 		pollEvery = 5 * time.Second
+	}
+	warnAfter := o.processingWarningAfter
+	if warnAfter <= 0 {
+		warnAfter = 3 * time.Minute
 	}
 
 	for {
@@ -232,6 +241,24 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 					return
 				}
 			}
+			if currentStatus == types.StatusProcessing {
+				if processingSince.IsZero() {
+					processingSince = time.Now()
+				}
+				if !processingWarned && time.Since(processingSince) >= warnAfter {
+					processingWarned = true
+					o.logger.Warn("nai processing duration exceeded warning threshold",
+						"task_id", task.TaskID,
+						"job_id", jobID,
+						"elapsed_ms", time.Since(processingSince).Milliseconds(),
+						"threshold_ms", warnAfter.Milliseconds(),
+					)
+					o.upsertStatus(taskCtx, task.ChatID, &statusMessageID,
+						fmt.Sprintf("任务 %s\n状态: processing\nJob ID: %s\n提示: 任务可能失败，系统继续轮询。", task.TaskID, jobID))
+				}
+			} else {
+				processingSince = time.Time{}
+			}
 
 		default:
 			o.logger.Info("unknown status", "task_id", task.TaskID, "job_id", jobID, "status", result.Status)
@@ -239,6 +266,8 @@ func (o *Orchestrator) ProcessTask(ctx context.Context, task types.DrawTask) {
 
 		select {
 		case <-taskCtx.Done():
+			o.logger.Warn("task context cancelled during poll interval wait", "task_id", task.TaskID, "job_id", jobID)
+			o.markCancelled(task, &statusMessageID, "已取消（轮询等待）")
 			return
 		case <-time.After(pollEvery):
 		}

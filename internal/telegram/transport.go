@@ -14,7 +14,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
+
+const defaultHTTPTimeout = 60 * time.Second
 
 func (b *Bot) setMyCommands(ctx context.Context) error {
 	cfg := b.cfg.Snapshot()
@@ -552,21 +555,21 @@ func newTelegramHTTPClient(proxyRaw string, logger *slog.Logger) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	proxyRaw = strings.TrimSpace(proxyRaw)
 	if proxyRaw == "" {
-		return &http.Client{Transport: transport}
+		return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
 	}
 
 	parsed, err := url.Parse(proxyRaw)
 	if err != nil {
 		logger.Warn("invalid telegram proxy url, fallback to direct", "proxy_url", proxyRaw, "error", err)
-		return &http.Client{Transport: transport}
+		return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
 	}
 	transport.Proxy = http.ProxyURL(parsed)
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
 }
 
 func newDirectHTTPClient() *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	// LLM upstream must bypass proxy; telegram proxy only applies to Telegram API.
 	transport.Proxy = nil
-	return &http.Client{Transport: transport}
+	return &http.Client{Transport: transport, Timeout: defaultHTTPTimeout}
 }

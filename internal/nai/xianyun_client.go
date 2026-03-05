@@ -3,9 +3,12 @@ package nai
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"grimoire/internal/config"
 )
+
+const defaultHTTPTimeout = 60 * time.Second
 
 type XianyunClient struct {
 	cfg        *config.Manager
@@ -16,7 +19,7 @@ type XianyunClient struct {
 func NewXianyunClient(cfg *config.Manager, logger *slog.Logger) *XianyunClient {
 	return &XianyunClient{
 		cfg:        cfg,
-		httpClient: &http.Client{},
+		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
 		logger:     logger,
 	}
 }
