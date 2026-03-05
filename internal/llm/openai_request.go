@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -86,7 +87,7 @@ func (c *OpenAIClient) requestLLMContent(
 		return "", fmt.Errorf("构建 LLM 请求失败: %w", err)
 	}
 
-	url := strings.TrimRight(cfg.LLM.BaseURL, "/") + "/chat/completions"
+	url := buildLLMChatCompletionsURL(cfg)
 	c.logger.Info("llm http request start",
 		"url", url,
 		"model", cfg.LLM.Model,
@@ -147,4 +148,37 @@ func (c *OpenAIClient) requestLLMContent(
 		return "", &parseOutputError{cause: fmt.Errorf("解析 LLM 响应失败: %w, body=%s", err, truncate(string(respBody), 400))}
 	}
 	return content, nil
+}
+
+func buildLLMChatCompletionsURL(cfg config.Config) string {
+	base := strings.TrimSpace(cfg.LLM.BaseURL)
+	if cfg.LLM.Provider == config.ProviderOpenAICustom {
+		base = ensureOpenAICustomV1BaseURL(base)
+	} else {
+		base = strings.TrimRight(base, "/")
+	}
+	return strings.TrimRight(base, "/") + "/chat/completions"
+}
+
+func ensureOpenAICustomV1BaseURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return strings.TrimRight(raw, "/")
+	}
+
+	path := strings.TrimSuffix(parsed.Path, "/")
+	switch {
+	case path == "":
+		parsed.Path = "/v1"
+	case strings.HasSuffix(path, "/v1"):
+		parsed.Path = path
+	default:
+		parsed.Path = path + "/v1"
+	}
+	return parsed.String()
 }
