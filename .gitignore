@@ -22,3 +22,4 @@ coverage.out
 .vscode/
 *.swp
 *.swo
+tmp
