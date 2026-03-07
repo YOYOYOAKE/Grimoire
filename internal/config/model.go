@@ -2,7 +2,7 @@ package config
 
 type Config struct {
 	Telegram Telegram `yaml:"telegram"`
-	LLM      LLM      `yaml:"llm"`
+	LLMs     []LLM    `yaml:"llms"`
 	NAI      NAI      `yaml:"nai"`
 }
 

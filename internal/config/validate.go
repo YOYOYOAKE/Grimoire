@@ -17,20 +17,26 @@ func validate(cfg Config) error {
 		return err
 	}
 
-	if cfg.LLM.BaseURL == "" {
-		return fmt.Errorf("llm.base_url is required")
+	if len(cfg.LLMs) == 0 {
+		return fmt.Errorf("llms must contain at least one entry")
 	}
-	if cfg.LLM.APIKey == "" {
-		return fmt.Errorf("llm.api_key is required")
-	}
-	if cfg.LLM.Model == "" {
-		return fmt.Errorf("llm.model is required")
-	}
-	if err := validateURL("llm.base_url", cfg.LLM.BaseURL); err != nil {
-		return err
-	}
-	if err := validateOptionalURL("llm.proxy", cfg.LLM.Proxy); err != nil {
-		return err
+	for i, llm := range cfg.LLMs {
+		prefix := fmt.Sprintf("llms[%d]", i)
+		if llm.BaseURL == "" {
+			return fmt.Errorf("%s.base_url is required", prefix)
+		}
+		if llm.APIKey == "" {
+			return fmt.Errorf("%s.api_key is required", prefix)
+		}
+		if llm.Model == "" {
+			return fmt.Errorf("%s.model is required", prefix)
+		}
+		if err := validateURL(prefix+".base_url", llm.BaseURL); err != nil {
+			return err
+		}
+		if err := validateOptionalURL(prefix+".proxy", llm.Proxy); err != nil {
+			return err
+		}
 	}
 
 	if cfg.NAI.BaseURL == "" {

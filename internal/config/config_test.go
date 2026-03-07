@@ -15,10 +15,10 @@ func TestLoadNormalizesOpenAIBaseURL(t *testing.T) {
 telegram:
   bot_token: "token"
   admin_user_id: 1
-llm:
-  base_url: "https://api.openai.com"
-  api_key: "key"
-  model: "gpt-4o-mini"
+llms:
+  - base_url: "https://api.openai.com"
+    api_key: "key"
+    model: "gpt-4o-mini"
 nai:
   base_url: "https://image.idlecloud.cc/api"
   api_key: "key"
@@ -32,8 +32,14 @@ nai:
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.LLM.BaseURL != "https://api.openai.com/v1" {
-		t.Fatalf("unexpected llm base url: %q", cfg.LLM.BaseURL)
+	if got := len(cfg.LLMs); got != 1 {
+		t.Fatalf("unexpected llm count: %d", got)
+	}
+	if cfg.LLMs[0].BaseURL != "https://api.openai.com/v1" {
+		t.Fatalf("unexpected llm base url: %q", cfg.LLMs[0].BaseURL)
+	}
+	if cfg.LLMs[0].TimeoutSec != 180 {
+		t.Fatalf("unexpected llm timeout: %d", cfg.LLMs[0].TimeoutSec)
 	}
 	if cfg.NAI.PollIntervalSec != 5 {
 		t.Fatalf("unexpected poll interval: %d", cfg.NAI.PollIntervalSec)
@@ -47,11 +53,58 @@ func TestLoadRejectsUnknownField(t *testing.T) {
 telegram:
   bot_token: "token"
   admin_user_id: 1
+llms:
+  - base_url: "https://api.openai.com/v1"
+    api_key: "key"
+    model: "gpt-4o-mini"
+    unknown: true
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: "key"
+  model: "nai"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoadRejectsLegacyLLMObject(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
 llm:
   base_url: "https://api.openai.com/v1"
   api_key: "key"
   model: "gpt-4o-mini"
-  unknown: true
+nai:
+  base_url: "https://image.idlecloud.cc/api"
+  api_key: "key"
+  model: "nai"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestLoadRequiresAtLeastOneLLM(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
+llms: []
 nai:
   base_url: "https://image.idlecloud.cc/api"
   api_key: "key"
@@ -118,7 +171,7 @@ func TestEnsureDefaultConfigWritesTemplate(t *testing.T) {
 		t.Fatalf("read config file: %v", err)
 	}
 	content := string(data)
-	for _, section := range []string{"telegram:", "llm:", "nai:"} {
+	for _, section := range []string{"telegram:", "llms:", "nai:"} {
 		if !strings.Contains(content, section) {
 			t.Fatalf("missing section %q in template", section)
 		}

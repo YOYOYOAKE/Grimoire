@@ -44,12 +44,14 @@ func normalize(cfg Config) Config {
 		cfg.Telegram.TimeoutSec = 60
 	}
 
-	cfg.LLM.BaseURL = ensureBaseURL(strings.TrimSpace(cfg.LLM.BaseURL), true)
-	cfg.LLM.APIKey = strings.TrimSpace(cfg.LLM.APIKey)
-	cfg.LLM.Model = strings.TrimSpace(cfg.LLM.Model)
-	cfg.LLM.Proxy = strings.TrimSpace(cfg.LLM.Proxy)
-	if cfg.LLM.TimeoutSec <= 0 {
-		cfg.LLM.TimeoutSec = 180
+	for i := range cfg.LLMs {
+		cfg.LLMs[i].BaseURL = ensureBaseURL(strings.TrimSpace(cfg.LLMs[i].BaseURL), true)
+		cfg.LLMs[i].APIKey = strings.TrimSpace(cfg.LLMs[i].APIKey)
+		cfg.LLMs[i].Model = strings.TrimSpace(cfg.LLMs[i].Model)
+		cfg.LLMs[i].Proxy = strings.TrimSpace(cfg.LLMs[i].Proxy)
+		if cfg.LLMs[i].TimeoutSec <= 0 {
+			cfg.LLMs[i].TimeoutSec = 180
+		}
 	}
 
 	cfg.NAI.BaseURL = ensureBaseURL(strings.TrimSpace(cfg.NAI.BaseURL), false)
@@ -103,12 +105,12 @@ func DefaultTemplate() string {
   proxy: ""
   timeout_sec: 60
 
-llm:
-  base_url: "https://api.openai.com/v1"
-  api_key: ""
-  model: "gpt-4o-mini"
-  proxy: ""
-  timeout_sec: 180
+llms:
+  - base_url: "https://api.openai.com/v1"
+    api_key: ""
+    model: "gpt-4o-mini"
+    proxy: ""
+    timeout_sec: 180
 
 nai:
   base_url: "https://image.idlecloud.cc/api"

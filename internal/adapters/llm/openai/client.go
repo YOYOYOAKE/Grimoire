@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -17,32 +19,87 @@ import (
 )
 
 type Client struct {
-	cfg        config.Config
+	cfg        config.LLM
 	httpClient *http.Client
 	logger     *slog.Logger
 }
 
+type FailoverClient struct {
+	clients []translateClient
+	logger  *slog.Logger
+}
+
+type translateClient interface {
+	translate(ctx context.Context, prompt string, shape domaindraw.Shape) (translationResult, error)
+	model() string
+	baseURL() string
+}
+
+type translationResult struct {
+	Translation  domaindraw.Translation
+	ResponseMode string
+}
+
 const translatePromptToolName = "translate_prompt"
+const attemptsPerLLM = 3
 
 const (
 	llmResponseModeTool      = "tool"
 	llmResponseModePlaintext = "plaintext"
 )
 
-func NewClient(cfg config.Config, logger *slog.Logger) *Client {
+func NewClient(cfg config.LLM, logger *slog.Logger) *Client {
 	return &Client{
 		cfg:        cfg,
-		httpClient: httpclient.New(cfg.LLM.TimeoutSec, cfg.LLM.Proxy, logger, "llm"),
+		httpClient: httpclient.New(cfg.TimeoutSec, cfg.Proxy, logger, "llm"),
 		logger:     logger,
 	}
 }
 
+func NewFailoverClient(cfgs []config.LLM, logger *slog.Logger) *FailoverClient {
+	clients := make([]translateClient, 0, len(cfgs))
+	for _, cfg := range cfgs {
+		clients = append(clients, NewClient(cfg, logger))
+	}
+	return newFailoverClient(clients, logger)
+}
+
+func newFailoverClient(clients []translateClient, logger *slog.Logger) *FailoverClient {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &FailoverClient{
+		clients: clients,
+		logger:  logger,
+	}
+}
+
 func (c *Client) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.LLM.TimeoutSec)*time.Second)
+	result, err := c.translate(ctx, prompt, shape)
+	if err != nil {
+		return domaindraw.Translation{}, err
+	}
+	if c.logger != nil {
+		c.logger.Info(
+			"llm translated",
+			"shape", shape,
+			"llm_index", 0,
+			"model", c.cfg.Model,
+			"base_url_host", baseURLHost(c.cfg.BaseURL),
+			"attempt", 1,
+			"response_mode", result.ResponseMode,
+			"positive_prompt", result.Translation.PositivePrompt,
+		)
+	}
+	return result.Translation, nil
+}
+
+func (c *Client) translate(ctx context.Context, prompt string, shape domaindraw.Shape) (translationResult, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.TimeoutSec)*time.Second)
 	defer cancel()
 
 	body := map[string]any{
-		"model": c.cfg.LLM.Model,
+		"model": c.cfg.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": fmt.Sprintf("shape=%s\nrequest=%s", shape, strings.TrimSpace(prompt))},
@@ -60,47 +117,109 @@ func (c *Client) Translate(ctx context.Context, prompt string, shape domaindraw.
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return domaindraw.Translation{}, fmt.Errorf("marshal llm request: %w", err)
+		return translationResult{}, fmt.Errorf("marshal llm request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(c.cfg.LLM.BaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, strings.TrimRight(c.cfg.BaseURL, "/")+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
-		return domaindraw.Translation{}, fmt.Errorf("create llm request: %w", err)
+		return translationResult{}, fmt.Errorf("create llm request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.cfg.LLM.APIKey)
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		c.logFailure("llm request failed", shape, err, "", "")
-		return domaindraw.Translation{}, fmt.Errorf("llm request failed: %w", err)
+		return translationResult{}, fmt.Errorf("llm request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		c.logFailure("read llm response failed", shape, err, "", "")
-		return domaindraw.Translation{}, fmt.Errorf("read llm response: %w", err)
+		return translationResult{}, fmt.Errorf("read llm response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		c.logFailure("llm returned non-200", shape, fmt.Errorf("status=%d", resp.StatusCode), string(respBody), "")
-		return domaindraw.Translation{}, fmt.Errorf("llm status=%d body=%s", resp.StatusCode, truncate(string(respBody), 400))
+		return translationResult{}, fmt.Errorf("llm status=%d body=%s", resp.StatusCode, truncate(string(respBody), 400))
 	}
 
 	content, responseMode, err := extractAssistantContent(respBody)
 	if err != nil {
 		c.logFailure("extract llm content failed", shape, err, string(respBody), "")
-		return domaindraw.Translation{}, err
+		return translationResult{}, err
 	}
 	translation, err := parseTranslation(content)
 	if err != nil {
 		c.logFailure("parse llm content failed", shape, err, string(respBody), content)
-		return domaindraw.Translation{}, err
+		return translationResult{}, err
 	}
-	if c.logger != nil {
-		c.logger.Info("llm translated", "shape", shape, "response_mode", responseMode, "positive_prompt", translation.PositivePrompt)
+	return translationResult{
+		Translation:  translation,
+		ResponseMode: responseMode,
+	}, nil
+}
+
+func (c *Client) model() string {
+	return c.cfg.Model
+}
+
+func (c *Client) baseURL() string {
+	return c.cfg.BaseURL
+}
+
+func (c *FailoverClient) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
+	if len(c.clients) == 0 {
+		return domaindraw.Translation{}, fmt.Errorf("no llm providers configured")
 	}
-	return translation, nil
+
+	totalAttempts := 0
+	for llmIndex, client := range c.clients {
+		for attempt := 1; attempt <= attemptsPerLLM; attempt++ {
+			if err := ctx.Err(); err != nil {
+				return domaindraw.Translation{}, err
+			}
+
+			totalAttempts++
+			result, err := client.translate(ctx, prompt, shape)
+			if err == nil {
+				if c.logger != nil {
+					c.logger.Info(
+						"llm translated",
+						"shape", shape,
+						"llm_index", llmIndex,
+						"model", client.model(),
+						"base_url_host", baseURLHost(client.baseURL()),
+						"attempt", attempt,
+						"response_mode", result.ResponseMode,
+						"positive_prompt", result.Translation.PositivePrompt,
+					)
+				}
+				return result.Translation, nil
+			}
+
+			if c.logger != nil {
+				c.logger.Warn(
+					"llm translate attempt failed",
+					"shape", shape,
+					"llm_index", llmIndex,
+					"model", client.model(),
+					"base_url_host", baseURLHost(client.baseURL()),
+					"attempt", attempt,
+					"error", err,
+				)
+			}
+
+			if parentErr := ctx.Err(); parentErr != nil {
+				return domaindraw.Translation{}, parentErr
+			}
+			if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+				return domaindraw.Translation{}, ctx.Err()
+			}
+		}
+	}
+
+	return domaindraw.Translation{}, fmt.Errorf("all llm providers failed after %d attempts", totalAttempts)
 }
 
 const systemPrompt = `
@@ -445,6 +564,8 @@ func (c *Client) logFailure(message string, shape domaindraw.Shape, err error, r
 
 	attrs := []any{
 		"shape", shape,
+		"model", c.cfg.Model,
+		"base_url_host", baseURLHost(c.cfg.BaseURL),
 		"error", err,
 	}
 	if strings.TrimSpace(rawResponse) != "" {
@@ -461,4 +582,12 @@ func truncate(v string, limit int) string {
 		return v
 	}
 	return v[:limit] + "..."
+}
+
+func baseURLHost(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || strings.TrimSpace(parsed.Host) == "" {
+		return strings.TrimSpace(raw)
+	}
+	return parsed.Host
 }

@@ -317,13 +317,11 @@ func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *
 	t.Helper()
 
 	return &Client{
-		cfg: config.Config{
-			LLM: config.LLM{
-				BaseURL:    "https://api.openai.com/v1",
-				APIKey:     "key",
-				Model:      "gpt-4o-mini",
-				TimeoutSec: 10,
-			},
+		cfg: config.LLM{
+			BaseURL:    "https://api.openai.com/v1",
+			APIKey:     "key",
+			Model:      "gpt-4o-mini",
+			TimeoutSec: 10,
 		},
 		httpClient: &http.Client{Transport: transport},
 		logger:     logger,

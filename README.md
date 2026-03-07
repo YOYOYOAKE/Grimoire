@@ -23,7 +23,7 @@ go build -o bin/grimoire-bot ./cmd/grimoire-bot
 
 首次启动时，如果可执行文件同级目录下不存在 `config.yaml`，程序会自动生成模板配置并退出。
 
-编辑生成的 `config.yaml`，填入 `telegram`、`llm`、`nai` 三组配置。
+编辑生成的 `config.yaml`，填入 `telegram`、`llms`、`nai` 三组配置。`llms` 是按顺序回退的 OpenAI-compatible 模型列表：前一个连续失败 3 次后会切到下一个。
 
 ## 运行
 

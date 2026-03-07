@@ -5,14 +5,14 @@ import (
 	"log/slog"
 	"time"
 
-	drawapp "grimoire/internal/app/draw"
-	preferencesapp "grimoire/internal/app/preferences"
-	"grimoire/internal/config"
 	xianyun "grimoire/internal/adapters/imagegen/xianyun"
 	openai "grimoire/internal/adapters/llm/openai"
 	memoryqueue "grimoire/internal/adapters/queue/memory"
 	memoryrepo "grimoire/internal/adapters/repository/memory"
 	"grimoire/internal/adapters/telegram"
+	drawapp "grimoire/internal/app/draw"
+	preferencesapp "grimoire/internal/app/preferences"
+	"grimoire/internal/config"
 )
 
 const workerConcurrency = 3 // Fixed for v2 initial release to keep runtime behavior simple while preserving async processing.
@@ -32,7 +32,7 @@ func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 	drawService := drawapp.NewService(
 		taskRepo,
 		preferenceRepo,
-		openai.NewClient(cfg, logger),
+		openai.NewFailoverClient(cfg.LLMs, logger),
 		xianyun.NewClient(cfg, logger),
 		telegramBot,
 		func() time.Time { return time.Now() },
