@@ -40,32 +40,32 @@ func Load(path string) (Config, error) {
 func normalize(cfg Config) Config {
 	cfg.Telegram.BotToken = strings.TrimSpace(cfg.Telegram.BotToken)
 	cfg.Telegram.Proxy = strings.TrimSpace(cfg.Telegram.Proxy)
-	if cfg.Telegram.TimeoutSec <= 0 {
-		cfg.Telegram.TimeoutSec = 60
+	cfg.Telegram.TimeoutSec = defaultInt(cfg.Telegram.TimeoutSec, 60)
+
+	for i, llm := range cfg.LLMs {
+		normalizeProvider(&llm.BaseURL, &llm.APIKey, &llm.Model, &llm.Proxy, true, &llm.TimeoutSec, 180)
+		cfg.LLMs[i] = llm
 	}
 
-	for i := range cfg.LLMs {
-		cfg.LLMs[i].BaseURL = ensureBaseURL(strings.TrimSpace(cfg.LLMs[i].BaseURL), true)
-		cfg.LLMs[i].APIKey = strings.TrimSpace(cfg.LLMs[i].APIKey)
-		cfg.LLMs[i].Model = strings.TrimSpace(cfg.LLMs[i].Model)
-		cfg.LLMs[i].Proxy = strings.TrimSpace(cfg.LLMs[i].Proxy)
-		if cfg.LLMs[i].TimeoutSec <= 0 {
-			cfg.LLMs[i].TimeoutSec = 180
-		}
-	}
-
-	cfg.NAI.BaseURL = ensureBaseURL(strings.TrimSpace(cfg.NAI.BaseURL), false)
-	cfg.NAI.APIKey = strings.TrimSpace(cfg.NAI.APIKey)
-	cfg.NAI.Model = strings.TrimSpace(cfg.NAI.Model)
-	cfg.NAI.Proxy = strings.TrimSpace(cfg.NAI.Proxy)
-	if cfg.NAI.TimeoutSec <= 0 {
-		cfg.NAI.TimeoutSec = 180
-	}
-	if cfg.NAI.PollIntervalSec <= 0 {
-		cfg.NAI.PollIntervalSec = 5
-	}
+	normalizeProvider(&cfg.NAI.BaseURL, &cfg.NAI.APIKey, &cfg.NAI.Model, &cfg.NAI.Proxy, false, &cfg.NAI.TimeoutSec, 180)
+	cfg.NAI.PollIntervalSec = defaultInt(cfg.NAI.PollIntervalSec, 5)
 
 	return cfg
+}
+
+func normalizeProvider(baseURL, apiKey, model, proxy *string, ensureV1 bool, timeout *int, defaultTimeout int) {
+	*baseURL = ensureBaseURL(strings.TrimSpace(*baseURL), ensureV1)
+	*apiKey = strings.TrimSpace(*apiKey)
+	*model = strings.TrimSpace(*model)
+	*proxy = strings.TrimSpace(*proxy)
+	*timeout = defaultInt(*timeout, defaultTimeout)
+}
+
+func defaultInt(value int, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func ResolveStartupPath(args []string) (string, bool, error) {

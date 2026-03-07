@@ -9,9 +9,7 @@ import (
 )
 
 func TestLoadNormalizesOpenAIBaseURL(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `
+	path := writeTestConfig(t, `
 telegram:
   bot_token: "token"
   admin_user_id: 1
@@ -23,10 +21,7 @@ nai:
   base_url: "https://image.idlecloud.cc/api"
   api_key: "key"
   model: "nai"
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+`)
 
 	cfg, err := Load(path)
 	if err != nil {
@@ -47,9 +42,7 @@ nai:
 }
 
 func TestLoadRejectsUnknownField(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `
+	path := writeTestConfig(t, `
 telegram:
   bot_token: "token"
   admin_user_id: 1
@@ -62,10 +55,7 @@ nai:
   base_url: "https://image.idlecloud.cc/api"
   api_key: "key"
   model: "nai"
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+`)
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected error")
@@ -73,9 +63,7 @@ nai:
 }
 
 func TestLoadRejectsLegacyLLMObject(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `
+	path := writeTestConfig(t, `
 telegram:
   bot_token: "token"
   admin_user_id: 1
@@ -87,10 +75,7 @@ nai:
   base_url: "https://image.idlecloud.cc/api"
   api_key: "key"
   model: "nai"
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+`)
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected error")
@@ -98,9 +83,7 @@ nai:
 }
 
 func TestLoadRequiresAtLeastOneLLM(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	content := `
+	path := writeTestConfig(t, `
 telegram:
   bot_token: "token"
   admin_user_id: 1
@@ -109,10 +92,7 @@ nai:
   base_url: "https://image.idlecloud.cc/api"
   api_key: "key"
   model: "nai"
-`
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+`)
 
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected error")
@@ -195,4 +175,14 @@ func TestExplicitMissingConfigReturnsNotExist(t *testing.T) {
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected os.ErrNotExist, got %v", err)
 	}
+}
+
+func writeTestConfig(t *testing.T, content string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
 }

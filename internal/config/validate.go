@@ -7,8 +7,8 @@ import (
 )
 
 func validate(cfg Config) error {
-	if cfg.Telegram.BotToken == "" {
-		return fmt.Errorf("telegram.bot_token is required")
+	if err := validateRequiredString("telegram.bot_token", cfg.Telegram.BotToken); err != nil {
+		return err
 	}
 	if cfg.Telegram.AdminUserID <= 0 {
 		return fmt.Errorf("telegram.admin_user_id must be > 0")
@@ -16,45 +16,43 @@ func validate(cfg Config) error {
 	if err := validateOptionalURL("telegram.proxy", cfg.Telegram.Proxy); err != nil {
 		return err
 	}
-
 	if len(cfg.LLMs) == 0 {
 		return fmt.Errorf("llms must contain at least one entry")
 	}
 	for i, llm := range cfg.LLMs {
-		prefix := fmt.Sprintf("llms[%d]", i)
-		if llm.BaseURL == "" {
-			return fmt.Errorf("%s.base_url is required", prefix)
-		}
-		if llm.APIKey == "" {
-			return fmt.Errorf("%s.api_key is required", prefix)
-		}
-		if llm.Model == "" {
-			return fmt.Errorf("%s.model is required", prefix)
-		}
-		if err := validateURL(prefix+".base_url", llm.BaseURL); err != nil {
-			return err
-		}
-		if err := validateOptionalURL(prefix+".proxy", llm.Proxy); err != nil {
+		if err := validateProvider(fmt.Sprintf("llms[%d]", i), llm.BaseURL, llm.APIKey, llm.Model, llm.Proxy); err != nil {
 			return err
 		}
 	}
+	return validateProvider("nai", cfg.NAI.BaseURL, cfg.NAI.APIKey, cfg.NAI.Model, cfg.NAI.Proxy)
+}
 
-	if cfg.NAI.BaseURL == "" {
-		return fmt.Errorf("nai.base_url is required")
-	}
-	if cfg.NAI.APIKey == "" {
-		return fmt.Errorf("nai.api_key is required")
-	}
-	if cfg.NAI.Model == "" {
-		return fmt.Errorf("nai.model is required")
-	}
-	if err := validateURL("nai.base_url", cfg.NAI.BaseURL); err != nil {
-		return err
-	}
-	if err := validateOptionalURL("nai.proxy", cfg.NAI.Proxy); err != nil {
-		return err
+func validateRequiredString(name string, value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("%s is required", name)
 	}
 	return nil
+}
+
+func validateProvider(prefix string, baseURL string, apiKey string, model string, proxy string) error {
+	requiredFields := []struct {
+		name  string
+		value string
+	}{
+		{name: prefix + ".base_url", value: baseURL},
+		{name: prefix + ".api_key", value: apiKey},
+		{name: prefix + ".model", value: model},
+	}
+
+	for _, field := range requiredFields {
+		if err := validateRequiredString(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	if err := validateURL(prefix+".base_url", baseURL); err != nil {
+		return err
+	}
+	return validateOptionalURL(prefix+".proxy", proxy)
 }
 
 func validateURL(name string, raw string) error {

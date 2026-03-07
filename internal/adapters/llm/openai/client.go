@@ -79,18 +79,7 @@ func (c *Client) Translate(ctx context.Context, prompt string, shape domaindraw.
 	if err != nil {
 		return domaindraw.Translation{}, err
 	}
-	if c.logger != nil {
-		c.logger.Info(
-			"llm translated",
-			"shape", shape,
-			"llm_index", 0,
-			"model", c.cfg.Model,
-			"base_url_host", baseURLHost(c.cfg.BaseURL),
-			"attempt", 1,
-			"response_mode", result.ResponseMode,
-			"positive_prompt", result.Translation.PositivePrompt,
-		)
-	}
+	logTranslateSuccess(c.logger, shape, 0, c.cfg.Model, c.cfg.BaseURL, 1, result)
 	return result.Translation, nil
 }
 
@@ -175,6 +164,8 @@ func (c *FailoverClient) Translate(ctx context.Context, prompt string, shape dom
 
 	totalAttempts := 0
 	for llmIndex, client := range c.clients {
+		model := client.model()
+		baseURL := client.baseURL()
 		for attempt := 1; attempt <= attemptsPerLLM; attempt++ {
 			if err := ctx.Err(); err != nil {
 				return domaindraw.Translation{}, err
@@ -183,32 +174,11 @@ func (c *FailoverClient) Translate(ctx context.Context, prompt string, shape dom
 			totalAttempts++
 			result, err := client.translate(ctx, prompt, shape)
 			if err == nil {
-				if c.logger != nil {
-					c.logger.Info(
-						"llm translated",
-						"shape", shape,
-						"llm_index", llmIndex,
-						"model", client.model(),
-						"base_url_host", baseURLHost(client.baseURL()),
-						"attempt", attempt,
-						"response_mode", result.ResponseMode,
-						"positive_prompt", result.Translation.PositivePrompt,
-					)
-				}
+				logTranslateSuccess(c.logger, shape, llmIndex, model, baseURL, attempt, result)
 				return result.Translation, nil
 			}
 
-			if c.logger != nil {
-				c.logger.Warn(
-					"llm translate attempt failed",
-					"shape", shape,
-					"llm_index", llmIndex,
-					"model", client.model(),
-					"base_url_host", baseURLHost(client.baseURL()),
-					"attempt", attempt,
-					"error", err,
-				)
-			}
+			logTranslateAttemptFailure(c.logger, shape, llmIndex, model, baseURL, attempt, err)
 
 			if parentErr := ctx.Err(); parentErr != nil {
 				return domaindraw.Translation{}, parentErr
@@ -590,4 +560,37 @@ func baseURLHost(raw string) string {
 		return strings.TrimSpace(raw)
 	}
 	return parsed.Host
+}
+
+func logTranslateSuccess(logger *slog.Logger, shape domaindraw.Shape, llmIndex int, model string, baseURL string, attempt int, result translationResult) {
+	if logger == nil {
+		return
+	}
+
+	logger.Info(
+		"llm translated",
+		"shape", shape,
+		"llm_index", llmIndex,
+		"model", model,
+		"base_url_host", baseURLHost(baseURL),
+		"attempt", attempt,
+		"response_mode", result.ResponseMode,
+		"positive_prompt", result.Translation.PositivePrompt,
+	)
+}
+
+func logTranslateAttemptFailure(logger *slog.Logger, shape domaindraw.Shape, llmIndex int, model string, baseURL string, attempt int, err error) {
+	if logger == nil {
+		return
+	}
+
+	logger.Warn(
+		"llm translate attempt failed",
+		"shape", shape,
+		"llm_index", llmIndex,
+		"model", model,
+		"base_url_host", baseURLHost(baseURL),
+		"attempt", attempt,
+		"error", err,
+	)
 }
