@@ -3,6 +3,7 @@ package openai
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +48,11 @@ const (
 	llmResponseModeTool      = "tool"
 	llmResponseModePlaintext = "plaintext"
 )
+
+//go:embed system_prompt.md
+var systemPromptFile string
+
+var systemPrompt = strings.TrimSpace(systemPromptFile)
 
 func NewClient(cfg config.LLM, logger *slog.Logger) *Client {
 	return &Client{
@@ -191,18 +197,6 @@ func (c *FailoverClient) Translate(ctx context.Context, prompt string, shape dom
 
 	return domaindraw.Translation{}, fmt.Errorf("all llm providers failed after %d attempts", totalAttempts)
 }
-
-const systemPrompt = `
-You translate Chinese natural language image requests into NovelAI-friendly English tag prompts.
-
-Return:
-- positivePrompt: concise English prompt tags describing the requested image.
-- negativePrompt: concise English negative prompt tags for common defects or unwanted traits. Use an empty string if none are needed.
-
-Always call the translate_prompt tool exactly once.
-Do not answer with natural language.
-Do not output raw JSON in message content.
-`
 
 func translatePromptTool() map[string]any {
 	return map[string]any{
