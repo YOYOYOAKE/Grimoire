@@ -77,7 +77,7 @@ func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *
 			response := `{"ok":true,"result":{"message_id":1}}`
 			if strings.Contains(req.URL.Path, "getUpdates") {
 				response = `{"ok":true,"result":[]}`
-			} else if strings.Contains(req.URL.Path, "answerCallbackQuery") || strings.Contains(req.URL.Path, "editMessageText") || strings.Contains(req.URL.Path, "sendPhoto") || strings.Contains(req.URL.Path, "setMyCommands") {
+			} else if strings.Contains(req.URL.Path, "answerCallbackQuery") || strings.Contains(req.URL.Path, "editMessageText") || strings.Contains(req.URL.Path, "deleteMessage") || strings.Contains(req.URL.Path, "sendPhoto") || strings.Contains(req.URL.Path, "setMyCommands") {
 				response = `{"ok":true,"description":""}`
 			}
 			return &http.Response{
@@ -162,5 +162,40 @@ func TestResultMessageHasNoRetryButtons(t *testing.T) {
 	}
 	if strings.Contains(string(markup), "retry") {
 		t.Fatalf("unexpected retry callback: %s", string(markup))
+	}
+}
+
+func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
+	bot, _, _, buffer := newTestBot(t)
+
+	if err := bot.SendPhoto(context.Background(), 100, 20, "task.png", "", []byte("png")); err != nil {
+		t.Fatalf("send photo: %v", err)
+	}
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, "sendPhoto") {
+		t.Fatalf("expected sendPhoto request, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "name=\"reply_to_message_id\"") {
+		t.Fatalf("expected reply_to_message_id field, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "\r\n20\r\n") && !strings.Contains(logOutput, "\n20\n") {
+		t.Fatalf("expected reply target 20, got %s", logOutput)
+	}
+}
+
+func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
+	bot, _, _, buffer := newTestBot(t)
+
+	if err := bot.DeleteMessage(context.Background(), 100, 20); err != nil {
+		t.Fatalf("delete message: %v", err)
+	}
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, "deleteMessage") {
+		t.Fatalf("expected deleteMessage request, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"message_id":20`) {
+		t.Fatalf("expected message id payload, got %s", logOutput)
 	}
 }

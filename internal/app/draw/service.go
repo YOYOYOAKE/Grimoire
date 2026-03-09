@@ -101,10 +101,10 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		return domaindraw.Task{}, err
 	}
 
-	queuePos := s.scheduler.Enqueue(task.ID)
-	statusMessageID, err := s.notifier.SendText(ctx, task.ChatID, task.RequestMessageID, queuedText(task, queuePos))
+	statusMessageID, err := s.notifier.SendText(ctx, task.ChatID, task.RequestMessageID, queuedText())
 	if err != nil {
 		s.logger.Warn("send queued status failed", "task_id", task.ID, "error", err)
+		_ = s.scheduler.Enqueue(task.ID)
 		return task, nil
 	}
 
@@ -112,6 +112,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 	if err := s.tasks.Update(ctx, task); err != nil {
 		s.logger.Warn("update queued task status message failed", "task_id", task.ID, "error", err)
 	}
+	_ = s.scheduler.Enqueue(task.ID)
 	return task, nil
 }
 
@@ -127,7 +128,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	if err := task.MarkTranslating(s.now()); err != nil {
 		return err
 	}
-	if err := s.persistAndNotify(ctx, &task, translatingText(task)); err != nil {
+	if err := s.persistAndNotify(ctx, &task, translatingText()); err != nil {
 		return err
 	}
 
@@ -140,7 +141,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	if err := task.MarkSubmitting(s.now()); err != nil {
 		return err
 	}
-	if err := s.persistAndNotify(ctx, &task, submittingText(task)); err != nil {
+	if err := s.tasks.Update(ctx, task); err != nil {
 		return err
 	}
 
@@ -156,7 +157,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	if err := task.MarkPolling(jobID, s.now()); err != nil {
 		return err
 	}
-	if err := s.persistAndNotify(ctx, &task, pollingText(task, "queued", 0)); err != nil {
+	if err := s.persistAndNotify(ctx, &task, drawingText(0)); err != nil {
 		return err
 	}
 
@@ -172,26 +173,24 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 			detail := fmt.Sprintf("queued:%d", update.QueuePosition)
 			if detail != lastDetail {
 				lastDetail = detail
-				if err := s.upsertStatus(ctx, &task, pollingText(task, "queued", update.QueuePosition)); err != nil {
+				if err := s.upsertStatus(ctx, &task, drawingText(update.QueuePosition)); err != nil {
 					s.logger.Warn("update queued poll status failed", "task_id", task.ID, "error", err)
 				}
 			}
 		case domaindraw.JobProcessing:
 			if lastDetail != "processing" {
 				lastDetail = "processing"
-				if err := s.upsertStatus(ctx, &task, pollingText(task, "processing", update.QueuePosition)); err != nil {
+				if err := s.upsertStatus(ctx, &task, drawingText(update.QueuePosition)); err != nil {
 					s.logger.Warn("update processing poll status failed", "task_id", task.ID, "error", err)
 				}
 			}
 		case domaindraw.JobCompleted:
-			if err := s.notifier.SendPhoto(ctx, task.ChatID, task.ID+".png", completedCaption(task), update.Image); err != nil {
+			if err := s.notifier.SendPhoto(ctx, task.ChatID, task.RequestMessageID, task.ID+".png", "", update.Image); err != nil {
 				return s.failTask(ctx, &task, fmt.Sprintf("发送图片失败: %v", err))
 			}
+			s.deleteStatusMessage(ctx, task)
 			if err := task.MarkCompleted(s.now()); err != nil {
 				return err
-			}
-			if err := s.upsertStatus(ctx, &task, completedText(task)); err != nil {
-				s.logger.Warn("update completed status failed", "task_id", task.ID, "error", err)
 			}
 			return s.deleteTask(ctx, task.ID)
 		case domaindraw.JobFailed:
@@ -228,14 +227,18 @@ func (s *Service) persistAndNotify(ctx context.Context, task *domaindraw.Task, t
 	if err := s.tasks.Update(ctx, *task); err != nil {
 		return err
 	}
-	return s.upsertStatus(ctx, task, text)
+	if err := s.upsertStatus(ctx, task, text); err != nil {
+		s.logger.Warn("notify task status failed", "task_id", task.ID, "status", task.Status, "error", err)
+	}
+	return nil
 }
 
 func (s *Service) upsertStatus(ctx context.Context, task *domaindraw.Task, text string) error {
 	if task.StatusMessageID > 0 {
-		if err := s.notifier.EditText(ctx, task.ChatID, task.StatusMessageID, text); err == nil {
-			return nil
+		if err := s.notifier.EditText(ctx, task.ChatID, task.StatusMessageID, text); err != nil {
+			s.logger.Warn("edit status message failed", "task_id", task.ID, "message_id", task.StatusMessageID, "error", err)
 		}
+		return nil
 	}
 
 	messageID, err := s.notifier.SendText(ctx, task.ChatID, task.RequestMessageID, text)
@@ -250,7 +253,7 @@ func (s *Service) failTask(ctx context.Context, task *domaindraw.Task, reason st
 	if err := task.MarkFailed(reason, s.now()); err != nil {
 		return err
 	}
-	if err := s.upsertStatus(ctx, task, failedText(*task)); err != nil {
+	if err := s.upsertStatus(ctx, task, failedText(task.ErrorText)); err != nil {
 		s.logger.Warn("send failed status failed", "task_id", task.ID, "error", err)
 	}
 	return s.deleteTask(ctx, task.ID)
@@ -261,6 +264,15 @@ func (s *Service) deleteTask(ctx context.Context, taskID string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Service) deleteStatusMessage(ctx context.Context, task domaindraw.Task) {
+	if task.StatusMessageID == 0 {
+		return
+	}
+	if err := s.notifier.DeleteMessage(ctx, task.ChatID, task.StatusMessageID); err != nil {
+		s.logger.Warn("delete status message failed", "task_id", task.ID, "message_id", task.StatusMessageID, "error", err)
+	}
 }
 
 func mergeArtist(artist string, positivePrompt string) string {

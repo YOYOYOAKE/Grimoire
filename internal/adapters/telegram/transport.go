@@ -121,36 +121,85 @@ func (b *Bot) editMessage(ctx context.Context, chatID int64, messageID int64, te
 	return err
 }
 
-func (b *Bot) sendPhoto(ctx context.Context, chatID int64, filename string, caption string, content []byte) error {
+func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error {
 	endpoint := fmt.Sprintf("%s/bot%s/sendPhoto", apiBase, b.cfg.Telegram.BotToken)
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	if err := writer.WriteField("chat_id", strconv.FormatInt(chatID, 10)); err != nil {
-		return err
+	payload := map[string]any{
+		"chat_id": chatID,
+	}
+	if replyToMessageID > 0 {
+		payload["reply_to_message_id"] = replyToMessageID
 	}
 	if strings.TrimSpace(caption) != "" {
-		if err := writer.WriteField("caption", caption); err != nil {
-			return err
-		}
+		payload["caption"] = caption
 	}
-	part, err := writer.CreateFormFile("photo", filename)
+	req, err := newMultipartPhotoRequest(ctx, endpoint, payload, filename, content)
 	if err != nil {
 		return err
 	}
-	if _, err := part.Write(content); err != nil {
+	return b.doAPIRequest(req, nil)
+}
+
+func (b *Bot) deleteMessage(ctx context.Context, chatID int64, messageID int64) error {
+	endpoint := fmt.Sprintf("%s/bot%s/deleteMessage", apiBase, b.cfg.Telegram.BotToken)
+	payload := map[string]any{
+		"chat_id":    chatID,
+		"message_id": messageID,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
 		return err
 	}
-	if err := writer.Close(); err != nil {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
 		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return b.doAPIRequest(req, nil)
+}
+
+func newMultipartPhotoRequest(ctx context.Context, endpoint string, fields map[string]any, filename string, content []byte) (*http.Request, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	for key, value := range fields {
+		if err := writer.WriteField(key, stringifyFieldValue(value)); err != nil {
+			_ = writer.Close()
+			return nil, err
+		}
+	}
+
+	part, err := writer.CreateFormFile("photo", filename)
+	if err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if _, err := part.Write(content); err != nil {
+		_ = writer.Close()
+		return nil, err
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	return b.doAPIRequest(req, nil)
+	return req, nil
+}
+
+func stringifyFieldValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case int:
+		return strconv.Itoa(typed)
+	default:
+		return fmt.Sprint(value)
+	}
 }
 
 func (b *Bot) doAPIRequest(req *http.Request, target any) error {

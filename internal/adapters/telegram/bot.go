@@ -51,12 +51,12 @@ type Bot struct {
 
 func NewBot(cfg config.Config, logger *slog.Logger) *Bot {
 	return &Bot{
-		cfg:            cfg,
-		logger:         logger,
-		httpClient:     httpclient.New(cfg.Telegram.TimeoutSec, cfg.Telegram.Proxy, logger, "telegram"),
-		pendingArtist:  make(map[int64]struct{}),
-		updateOffset:   0,
-		drawService:    nil,
+		cfg:           cfg,
+		logger:        logger,
+		httpClient:    httpclient.New(cfg.Telegram.TimeoutSec, cfg.Telegram.Proxy, logger, "telegram"),
+		pendingArtist: make(map[int64]struct{}),
+		updateOffset:  0,
+		drawService:   nil,
 	}
 }
 
@@ -116,8 +116,12 @@ func (b *Bot) EditText(ctx context.Context, chatID int64, messageID int64, text 
 	return b.editMessage(ctx, chatID, messageID, text, nil)
 }
 
-func (b *Bot) SendPhoto(ctx context.Context, chatID int64, filename string, caption string, content []byte) error {
-	return b.sendPhoto(ctx, chatID, filename, caption, content)
+func (b *Bot) SendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error {
+	return b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content)
+}
+
+func (b *Bot) DeleteMessage(ctx context.Context, chatID int64, messageID int64) error {
+	return b.deleteMessage(ctx, chatID, messageID)
 }
 
 func (b *Bot) handleMessage(ctx context.Context, message Message) {

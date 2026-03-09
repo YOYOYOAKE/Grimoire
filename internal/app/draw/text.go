@@ -2,38 +2,29 @@ package draw
 
 import (
 	"fmt"
-
-	domaindraw "grimoire/internal/domain/draw"
+	"strings"
 )
 
-func queuedText(task domaindraw.Task, queuePos int) string {
-	return fmt.Sprintf("任务 %s\n状态: queued\n队列位置: %d", task.ID, queuePos)
+func queuedText() string {
+	return "已入队"
 }
 
-func translatingText(task domaindraw.Task) string {
-	return fmt.Sprintf("任务 %s\n状态: translating\n阶段: 提示词翻译", task.ID)
+func translatingText() string {
+	return "正在翻译提示词"
 }
 
-func submittingText(task domaindraw.Task) string {
-	return fmt.Sprintf("任务 %s\n状态: submitting\n阶段: 提交绘图任务", task.ID)
-}
-
-func pollingText(task domaindraw.Task, providerStatus string, queuePos int) string {
-	text := fmt.Sprintf("任务 %s\n状态: polling\nJob ID: %s\n生成状态: %s", task.ID, task.ProviderJobID, providerStatus)
+func drawingText(queuePos int) string {
+	text := "正在绘图"
 	if queuePos > 0 {
-		text += fmt.Sprintf("\n队列位置: %d", queuePos)
+		text += fmt.Sprintf("\n当前队列位置: %d", queuePos)
 	}
 	return text
 }
 
-func completedText(task domaindraw.Task) string {
-	return fmt.Sprintf("任务 %s\n状态: completed\nJob ID: %s\n结果: 图片已发送", task.ID, task.ProviderJobID)
-}
-
-func completedCaption(task domaindraw.Task) string {
-	return fmt.Sprintf("任务 %s 完成\nJob ID: %s", task.ID, task.ProviderJobID)
-}
-
-func failedText(task domaindraw.Task) string {
-	return fmt.Sprintf("任务 %s\n状态: failed\n原因: %s", task.ID, task.ErrorText)
+func failedText(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "任务失败"
+	}
+	return "任务失败\n原因: " + reason
 }

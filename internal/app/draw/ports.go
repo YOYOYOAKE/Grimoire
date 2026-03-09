@@ -37,5 +37,6 @@ type ImageGenerator interface {
 type Notifier interface {
 	SendText(ctx context.Context, chatID int64, replyToMessageID int64, text string) (int64, error)
 	EditText(ctx context.Context, chatID int64, messageID int64, text string) error
-	SendPhoto(ctx context.Context, chatID int64, filename string, caption string, content []byte) error
+	SendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error
+	DeleteMessage(ctx context.Context, chatID int64, messageID int64) error
 }

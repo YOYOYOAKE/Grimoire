@@ -54,11 +54,15 @@ func (s *preferenceRepoStub) GetByUserID(_ context.Context, userID int64) (domai
 }
 
 type schedulerStub struct {
-	taskIDs []string
+	taskIDs   []string
+	onEnqueue func(taskID string) int
 }
 
 func (s *schedulerStub) Enqueue(taskID string) int {
 	s.taskIDs = append(s.taskIDs, taskID)
+	if s.onEnqueue != nil {
+		return s.onEnqueue(taskID)
+	}
 	return len(s.taskIDs)
 }
 
@@ -95,26 +99,47 @@ func (s *generatorStub) Poll(_ context.Context, _ string) (domaindraw.JobUpdate,
 }
 
 type notifierStub struct {
-	texts    []string
-	photos   int
-	photoErr error
+	sentTexts    []string
+	editedTexts  []string
+	sendTextErr  error
+	editTextErr  error
+	sendPhotos   int
+	sendReplyTo  []int64
+	deleted      []int64
+	sendPhotoErr error
+	deleteErr    error
 }
 
 func (s *notifierStub) SendText(_ context.Context, _ int64, _ int64, text string) (int64, error) {
-	s.texts = append(s.texts, text)
-	return int64(len(s.texts)), nil
+	if s.sendTextErr != nil {
+		return 0, s.sendTextErr
+	}
+	s.sentTexts = append(s.sentTexts, text)
+	return int64(len(s.sentTexts)), nil
 }
 
 func (s *notifierStub) EditText(_ context.Context, _ int64, _ int64, text string) error {
-	s.texts = append(s.texts, text)
+	if s.editTextErr != nil {
+		return s.editTextErr
+	}
+	s.editedTexts = append(s.editedTexts, text)
 	return nil
 }
 
-func (s *notifierStub) SendPhoto(_ context.Context, _ int64, _ string, _ string, _ []byte) error {
-	if s.photoErr != nil {
-		return s.photoErr
+func (s *notifierStub) SendPhoto(_ context.Context, _ int64, replyToMessageID int64, _ string, _ string, _ []byte) error {
+	if s.sendPhotoErr != nil {
+		return s.sendPhotoErr
 	}
-	s.photos++
+	s.sendPhotos++
+	s.sendReplyTo = append(s.sendReplyTo, replyToMessageID)
+	return nil
+}
+
+func (s *notifierStub) DeleteMessage(_ context.Context, _ int64, messageID int64) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
+	s.deleted = append(s.deleted, messageID)
 	return nil
 }
 
@@ -157,8 +182,17 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 	if _, ok := taskRepo.tasks[task.ID]; ok {
 		t.Fatal("expected task deleted")
 	}
-	if notifier.photos != 1 {
-		t.Fatalf("expected 1 photo, got %d", notifier.photos)
+	if len(notifier.sentTexts) != 1 {
+		t.Fatalf("expected exactly 1 status text message, got %d", len(notifier.sentTexts))
+	}
+	if notifier.sendPhotos != 1 {
+		t.Fatalf("expected 1 sent photo, got %d", notifier.sendPhotos)
+	}
+	if len(notifier.sendReplyTo) != 1 || notifier.sendReplyTo[0] != 3 {
+		t.Fatalf("expected photo reply to request message 3, got %#v", notifier.sendReplyTo)
+	}
+	if len(notifier.deleted) != 1 || notifier.deleted[0] != 1 {
+		t.Fatalf("expected status message 1 deleted, got %#v", notifier.deleted)
 	}
 }
 
@@ -194,7 +228,7 @@ func TestProcessFailureDeletesTask(t *testing.T) {
 
 func TestProcessSendPhotoFailureDeletesTask(t *testing.T) {
 	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
-	notifier := &notifierStub{photoErr: errors.New("send failed")}
+	notifier := &notifierStub{sendPhotoErr: errors.New("send failed")}
 	service := NewService(
 		taskRepo,
 		&preferenceRepoStub{},
@@ -225,5 +259,142 @@ func TestProcessSendPhotoFailureDeletesTask(t *testing.T) {
 	}
 	if _, ok := taskRepo.tasks[task.ID]; ok {
 		t.Fatal("expected task deleted")
+	}
+	if len(notifier.deleted) != 0 {
+		t.Fatalf("expected status message kept on photo failure, got %#v", notifier.deleted)
+	}
+}
+
+func TestProcessSendsPhotoWhenStatusMessageMissing(t *testing.T) {
+	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
+	notifier := &notifierStub{sendTextErr: errors.New("send text failed")}
+	service := NewService(
+		taskRepo,
+		&preferenceRepoStub{},
+		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&generatorStub{
+			jobID: "job-1",
+			updates: []domaindraw.JobUpdate{
+				{Status: domaindraw.JobCompleted, Image: []byte("png")},
+			},
+		},
+		notifier,
+		time.Now,
+		func() string { return "task-1" },
+		time.Millisecond,
+		nil,
+	)
+	service.SetScheduler(&schedulerStub{})
+	task, err := service.Submit(context.Background(), SubmitCommand{
+		ChatID: 1,
+		UserID: 2,
+		Prompt: "moon",
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if task.StatusMessageID != 0 {
+		t.Fatalf("expected missing status message id, got %d", task.StatusMessageID)
+	}
+	if err := service.Process(context.Background(), task.ID); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if notifier.sendPhotos != 1 {
+		t.Fatalf("expected 1 sent photo, got %d", notifier.sendPhotos)
+	}
+	if len(notifier.sendReplyTo) != 1 || notifier.sendReplyTo[0] != 0 {
+		t.Fatalf("expected direct photo send without reply target, got %#v", notifier.sendReplyTo)
+	}
+	if len(notifier.deleted) != 0 {
+		t.Fatalf("expected no delete call without status message, got %#v", notifier.deleted)
+	}
+}
+
+func TestProcessDoesNotSendReplacementStatusMessageOnEditFailure(t *testing.T) {
+	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
+	notifier := &notifierStub{editTextErr: errors.New("edit failed")}
+	service := NewService(
+		taskRepo,
+		&preferenceRepoStub{},
+		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&generatorStub{
+			jobID: "job-1",
+			updates: []domaindraw.JobUpdate{
+				{Status: domaindraw.JobQueued, QueuePosition: 1},
+				{Status: domaindraw.JobCompleted, Image: []byte("png")},
+			},
+		},
+		notifier,
+		time.Now,
+		func() string { return "task-1" },
+		time.Millisecond,
+		nil,
+	)
+	service.SetScheduler(&schedulerStub{})
+	task, err := service.Submit(context.Background(), SubmitCommand{
+		ChatID:           1,
+		UserID:           2,
+		Prompt:           "moon",
+		RequestMessageID: 3,
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := service.Process(context.Background(), task.ID); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if len(notifier.sentTexts) != 1 {
+		t.Fatalf("expected only the initial status message, got %d", len(notifier.sentTexts))
+	}
+	if notifier.sendPhotos != 1 {
+		t.Fatalf("expected completion photo send, got %d", notifier.sendPhotos)
+	}
+	if len(notifier.deleted) != 1 || notifier.deleted[0] != 1 {
+		t.Fatalf("expected original status message deleted, got %#v", notifier.deleted)
+	}
+}
+
+func TestSubmitStoresStatusMessageBeforeEnqueue(t *testing.T) {
+	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
+	notifier := &notifierStub{}
+	scheduler := &schedulerStub{}
+	scheduler.onEnqueue = func(taskID string) int {
+		task, err := taskRepo.Get(context.Background(), taskID)
+		if err != nil {
+			t.Fatalf("get task during enqueue: %v", err)
+		}
+		if task.StatusMessageID == 0 {
+			t.Fatal("expected status message id stored before enqueue")
+		}
+		return len(scheduler.taskIDs)
+	}
+
+	service := NewService(
+		taskRepo,
+		&preferenceRepoStub{},
+		&translatorStub{},
+		&generatorStub{},
+		notifier,
+		time.Now,
+		func() string { return "task-1" },
+		time.Millisecond,
+		nil,
+	)
+	service.SetScheduler(scheduler)
+
+	task, err := service.Submit(context.Background(), SubmitCommand{
+		ChatID:           1,
+		UserID:           2,
+		Prompt:           "moon",
+		RequestMessageID: 3,
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if task.StatusMessageID != 1 {
+		t.Fatalf("expected returned task to include status message id 1, got %d", task.StatusMessageID)
+	}
+	if len(notifier.sentTexts) != 1 || notifier.sentTexts[0] != "已入队" {
+		t.Fatalf("unexpected queued text: %#v", notifier.sentTexts)
 	}
 }
