@@ -18,7 +18,7 @@ import (
 	"grimoire/internal/config"
 )
 
-const workerConcurrency = 3 // Fixed for v2 initial release to keep runtime behavior simple while preserving async processing.
+const workerConcurrency = 1 // NAI rejects concurrent jobs, so draw tasks must be processed serially.
 
 type App struct {
 	bot    *telegram.Bot
