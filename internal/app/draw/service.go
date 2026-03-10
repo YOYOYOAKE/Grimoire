@@ -98,10 +98,19 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		return domaindraw.Task{}, err
 	}
 
+	s.logger.Info(
+		"task queueing",
+		"task_id", task.ID,
+		"chat_id", task.ChatID,
+		"prompt", task.Prompt,
+		"shape", task.Shape,
+		"artists", task.Artist,
+	)
+
 	statusMessageID, err := s.notifier.SendText(ctx, task.ChatID, task.RequestMessageID, queuedText())
 	if err != nil {
 		s.logger.Warn("send queued status failed", "task_id", task.ID, "error", err)
-		_ = s.scheduler.Enqueue(task.ID)
+		s.enqueueTask(task)
 		return task, nil
 	}
 
@@ -109,7 +118,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 	if err := s.tasks.Update(ctx, task); err != nil {
 		s.logger.Warn("update queued task status message failed", "task_id", task.ID, "error", err)
 	}
-	_ = s.scheduler.Enqueue(task.ID)
+	s.enqueueTask(task)
 	return task, nil
 }
 
@@ -146,6 +155,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		PositivePrompt: task.PositivePrompt,
 		NegativePrompt: task.NegativePrompt,
 		Shape:          task.Shape,
+		Artists:        task.Artist,
 	})
 	if err != nil {
 		return s.failTask(ctx, &task, fmt.Sprintf("提交绘图任务失败: %v", err))
@@ -164,6 +174,13 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		if err != nil {
 			return s.failTask(ctx, &task, fmt.Sprintf("轮询失败: %v", err))
 		}
+		s.logger.Info(
+			"task poll updated",
+			"task_id", task.ID,
+			"provider_job_id", task.ProviderJobID,
+			"status", update.Status,
+			"queue_position", update.QueuePosition,
+		)
 
 		switch update.Status {
 		case domaindraw.JobQueued:
@@ -185,6 +202,13 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 			if err := s.notifier.SendPhoto(ctx, task.ChatID, task.RequestMessageID, task.ID+".png", "", update.Image); err != nil {
 				return s.failTask(ctx, &task, fmt.Sprintf("发送图片失败: %v", err))
 			}
+			s.logger.Info(
+				"task image sent",
+				"task_id", task.ID,
+				"chat_id", task.ChatID,
+				"reply_to_message_id", task.RequestMessageID,
+				"provider_job_id", task.ProviderJobID,
+			)
 			s.deleteStatusMessage(ctx, task)
 			if err := task.MarkCompleted(s.now()); err != nil {
 				return err
@@ -214,6 +238,11 @@ func (s *Service) preferenceSnapshot() (domaindraw.Shape, string, error) {
 		return "", "", err
 	}
 	return preference.Shape, preference.Artists, nil
+}
+
+func (s *Service) enqueueTask(task domaindraw.Task) {
+	position := s.scheduler.Enqueue(task.ID)
+	s.logger.Info("task enqueued", "task_id", task.ID, "queue_position", position)
 }
 
 func (s *Service) persistAndNotify(ctx context.Context, task *domaindraw.Task, text string) error {

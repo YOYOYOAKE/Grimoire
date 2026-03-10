@@ -17,10 +17,16 @@ import (
 	"grimoire/internal/platform/httpclient"
 )
 
+const (
+	submitAttempts   = 3
+	submitRetryDelay = time.Second
+)
+
 type Client struct {
 	cfg        config.Config
 	httpClient *http.Client
 	logger     *slog.Logger
+	wait       func(ctx context.Context, delay time.Duration) error
 }
 
 func NewClient(cfg config.Config, logger *slog.Logger) *Client {
@@ -28,13 +34,11 @@ func NewClient(cfg config.Config, logger *slog.Logger) *Client {
 		cfg:        cfg,
 		httpClient: httpclient.New(cfg.NAI.TimeoutSec, cfg.NAI.Proxy, logger, "nai"),
 		logger:     logger,
+		wait:       waitWithContext,
 	}
 }
 
 func (c *Client) Submit(ctx context.Context, req domaindraw.GenerateRequest) (string, error) {
-	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.NAI.TimeoutSec)*time.Second)
-	defer cancel()
-
 	width, height, err := resolveDimensions(req.Shape)
 	if err != nil {
 		return "", err
@@ -75,40 +79,48 @@ func (c *Client) Submit(ctx context.Context, req domaindraw.GenerateRequest) (st
 	}
 
 	endpoint := strings.TrimRight(c.cfg.NAI.BaseURL, "/") + "/generate_image"
-	httpReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(data))
-	if err != nil {
-		return "", fmt.Errorf("create nai request: %w", err)
+	var lastErr error
+	wait := c.wait
+	if wait == nil {
+		wait = waitWithContext
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.NAI.APIKey)
-	httpReq.Header.Set("Content-Type", "application/json")
+	for attempt := 1; attempt <= submitAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		logSubmitRequest(c.logger, c.cfg.NAI.BaseURL, c.cfg.NAI.Model, attempt, req.Shape, req.Artists)
 
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("submit nai request: %w", err)
-	}
-	defer resp.Body.Close()
+		jobID, retryable, err := c.submitOnce(ctx, endpoint, data)
+		if err == nil {
+			if c.logger != nil {
+				c.logger.Info("nai submitted", "job_id", jobID, "shape", req.Shape)
+			}
+			return jobID, nil
+		}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read submit response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("submit nai status=%d body=%s", resp.StatusCode, truncate(string(body), 400))
+		lastErr = err
+		if !retryable || attempt == submitAttempts {
+			return "", err
+		}
+
+		if c.logger != nil {
+			c.logger.Warn(
+				"nai submit attempt failed",
+				"base_url", strings.TrimSpace(c.cfg.NAI.BaseURL),
+				"model", c.cfg.NAI.Model,
+				"attempt", attempt,
+				"shape", req.Shape,
+				"artists", strings.TrimSpace(req.Artists),
+				"error", err,
+			)
+		}
+
+		if err := wait(ctx, submitRetryDelay); err != nil {
+			return "", err
+		}
 	}
 
-	var out struct {
-		JobID string `json:"job_id"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return "", fmt.Errorf("decode submit response: %w", err)
-	}
-	if strings.TrimSpace(out.JobID) == "" {
-		return "", fmt.Errorf("submit response missing job_id")
-	}
-	if c.logger != nil {
-		c.logger.Info("nai submitted", "job_id", out.JobID, "shape", req.Shape)
-	}
-	return out.JobID, nil
+	return "", lastErr
 }
 
 func (c *Client) Poll(ctx context.Context, jobID string) (domaindraw.JobUpdate, error) {
@@ -181,4 +193,68 @@ func truncate(v string, limit int) string {
 		return v
 	}
 	return v[:limit] + "..."
+}
+
+func (c *Client) submitOnce(ctx context.Context, endpoint string, data []byte) (string, bool, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.NAI.TimeoutSec)*time.Second)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return "", false, fmt.Errorf("create nai request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.NAI.APIKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return "", true, fmt.Errorf("submit nai request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", true, fmt.Errorf("read submit response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", true, fmt.Errorf("submit nai status=%d body=%s", resp.StatusCode, truncate(string(body), 400))
+	}
+
+	var out struct {
+		JobID string `json:"job_id"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return "", true, fmt.Errorf("decode submit response: %w", err)
+	}
+	if strings.TrimSpace(out.JobID) == "" {
+		return "", true, fmt.Errorf("submit response missing job_id")
+	}
+	return out.JobID, true, nil
+}
+
+func logSubmitRequest(logger *slog.Logger, baseURL string, model string, attempt int, shape domaindraw.Shape, artists string) {
+	if logger == nil {
+		return
+	}
+
+	logger.Info(
+		"nai request started",
+		"base_url", strings.TrimSpace(baseURL),
+		"model", model,
+		"attempt", attempt,
+		"shape", shape,
+		"artists", strings.TrimSpace(artists),
+	)
+}
+
+func waitWithContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }

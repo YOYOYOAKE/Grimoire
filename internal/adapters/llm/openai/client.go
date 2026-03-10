@@ -81,11 +81,12 @@ func newFailoverClient(clients []translateClient, logger *slog.Logger) *Failover
 }
 
 func (c *Client) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
+	logTranslateRequest(c.logger, c.cfg.BaseURL, c.cfg.Model, 1, shape)
 	result, err := c.translate(ctx, prompt, shape)
 	if err != nil {
 		return domaindraw.Translation{}, err
 	}
-	logTranslateSuccess(c.logger, shape, 0, c.cfg.Model, c.cfg.BaseURL, 1, result)
+	logTranslateSuccess(c.logger, result.Translation)
 	return result.Translation, nil
 }
 
@@ -178,9 +179,10 @@ func (c *FailoverClient) Translate(ctx context.Context, prompt string, shape dom
 			}
 
 			totalAttempts++
+			logTranslateRequest(c.logger, baseURL, model, attempt, shape)
 			result, err := client.translate(ctx, prompt, shape)
 			if err == nil {
-				logTranslateSuccess(c.logger, shape, llmIndex, model, baseURL, attempt, result)
+				logTranslateSuccess(c.logger, result.Translation)
 				return result.Translation, nil
 			}
 
@@ -556,20 +558,29 @@ func baseURLHost(raw string) string {
 	return parsed.Host
 }
 
-func logTranslateSuccess(logger *slog.Logger, shape domaindraw.Shape, llmIndex int, model string, baseURL string, attempt int, result translationResult) {
+func logTranslateRequest(logger *slog.Logger, baseURL string, model string, attempt int, shape domaindraw.Shape) {
+	if logger == nil {
+		return
+	}
+
+	logger.Info(
+		"llm request started",
+		"base_url", strings.TrimSpace(baseURL),
+		"model", model,
+		"attempt", attempt,
+		"shape", shape,
+	)
+}
+
+func logTranslateSuccess(logger *slog.Logger, translation domaindraw.Translation) {
 	if logger == nil {
 		return
 	}
 
 	logger.Info(
 		"llm translated",
-		"shape", shape,
-		"llm_index", llmIndex,
-		"model", model,
-		"base_url_host", baseURLHost(baseURL),
-		"attempt", attempt,
-		"response_mode", result.ResponseMode,
-		"positive_prompt", result.Translation.PositivePrompt,
+		"positive_prompt", translation.PositivePrompt,
+		"negative_prompt", translation.NegativePrompt,
 	)
 }
 

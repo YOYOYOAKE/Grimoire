@@ -185,21 +185,18 @@ func TestTranslateFallsBackToAssistantJSON(t *testing.T) {
 	}
 }
 
-func TestTranslateLogsResponseModeOnSuccess(t *testing.T) {
+func TestTranslateLogsRequestAndTranslatedPrompts(t *testing.T) {
 	testCases := []struct {
 		name         string
 		responseBody string
-		expectedMode string
 	}{
 		{
 			name:         "tool",
 			responseBody: completionWithToolCall(t, `{"positivePrompt":"moonlit girl","negativePrompt":""}`),
-			expectedMode: llmResponseModeTool,
 		},
 		{
 			name:         "plaintext",
 			responseBody: completionWithContent(t, `{"positivePrompt":"moonlit girl","negativePrompt":""}`),
-			expectedMode: llmResponseModePlaintext,
 		},
 	}
 
@@ -216,11 +213,29 @@ func TestTranslateLogsResponseModeOnSuccess(t *testing.T) {
 			}
 
 			logOutput := logBuffer.String()
+			if !strings.Contains(logOutput, "llm request started") {
+				t.Fatalf("expected request log, got %s", logOutput)
+			}
+			if !strings.Contains(logOutput, "base_url=https://api.openai.com/v1") {
+				t.Fatalf("expected base_url in request log, got %s", logOutput)
+			}
+			if !strings.Contains(logOutput, "model=gpt-4o-mini") {
+				t.Fatalf("expected model in request log, got %s", logOutput)
+			}
+			if !strings.Contains(logOutput, "attempt=1") {
+				t.Fatalf("expected attempt in request log, got %s", logOutput)
+			}
 			if !strings.Contains(logOutput, "llm translated") {
 				t.Fatalf("expected success log, got %s", logOutput)
 			}
-			if !strings.Contains(logOutput, "response_mode="+tc.expectedMode) {
-				t.Fatalf("expected response mode %q, got %s", tc.expectedMode, logOutput)
+			if !strings.Contains(logOutput, "positive_prompt=\"moonlit girl\"") {
+				t.Fatalf("expected positive prompt in success log, got %s", logOutput)
+			}
+			if !strings.Contains(logOutput, "negative_prompt=\"\"") {
+				t.Fatalf("expected negative prompt in success log, got %s", logOutput)
+			}
+			if strings.Contains(logOutput, "response_mode=") {
+				t.Fatalf("did not expect response_mode in success log, got %s", logOutput)
 			}
 		})
 	}

@@ -61,6 +61,7 @@ type GenerateRequest struct {
 	PositivePrompt string
 	NegativePrompt string
 	Shape          Shape
+	Artists        string
 }
 
 type JobUpdate struct {

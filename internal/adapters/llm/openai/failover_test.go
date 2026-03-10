@@ -213,22 +213,31 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 	}
 
 	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, "llm request started") {
+		t.Fatalf("expected request log, got %s", logOutput)
+	}
 	if !strings.Contains(logOutput, "llm translate attempt failed") {
 		t.Fatalf("expected failure log, got %s", logOutput)
 	}
 	if !strings.Contains(logOutput, "llm translated") {
 		t.Fatalf("expected success log, got %s", logOutput)
 	}
-	if !strings.Contains(logOutput, "llm_index=1") {
-		t.Fatalf("expected llm index in success log, got %s", logOutput)
+	if !strings.Contains(logOutput, "base_url=https://second.example/v1") {
+		t.Fatalf("expected second base_url in request log, got %s", logOutput)
 	}
 	if !strings.Contains(logOutput, "model=second") {
-		t.Fatalf("expected model in success log, got %s", logOutput)
+		t.Fatalf("expected model in logs, got %s", logOutput)
 	}
 	if !strings.Contains(logOutput, "attempt=1") {
-		t.Fatalf("expected attempt in success log, got %s", logOutput)
+		t.Fatalf("expected attempt in logs, got %s", logOutput)
 	}
-	if !strings.Contains(logOutput, "response_mode=tool") {
-		t.Fatalf("expected response mode in success log, got %s", logOutput)
+	if !strings.Contains(logOutput, "positive_prompt=pos") {
+		t.Fatalf("expected positive prompt in success log, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "negative_prompt=neg") {
+		t.Fatalf("expected negative prompt in success log, got %s", logOutput)
+	}
+	if strings.Contains(logOutput, "response_mode=") {
+		t.Fatalf("did not expect response_mode in success log, got %s", logOutput)
 	}
 }

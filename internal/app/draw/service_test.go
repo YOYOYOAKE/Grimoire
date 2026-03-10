@@ -1,8 +1,11 @@
 package draw
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,13 +78,17 @@ func (s *translatorStub) Translate(_ context.Context, _ string, _ domaindraw.Sha
 }
 
 type generatorStub struct {
-	jobID   string
-	updates []domaindraw.JobUpdate
-	submit  error
-	poll    error
+	jobID       string
+	updates     []domaindraw.JobUpdate
+	submit      error
+	poll        error
+	submitCalls int
+	lastRequest domaindraw.GenerateRequest
 }
 
-func (s *generatorStub) Submit(_ context.Context, _ domaindraw.GenerateRequest) (string, error) {
+func (s *generatorStub) Submit(_ context.Context, req domaindraw.GenerateRequest) (string, error) {
+	s.submitCalls++
+	s.lastRequest = req
 	return s.jobID, s.submit
 }
 
@@ -144,19 +151,25 @@ func (s *notifierStub) DeleteMessage(_ context.Context, _ int64, messageID int64
 
 func TestProcessSuccessDeletesTask(t *testing.T) {
 	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
-	preferences := &preferenceRepoStub{}
+	preferences := &preferenceRepoStub{
+		preference: domainpreferences.Preference{
+			Shape:   domaindraw.ShapeSquare,
+			Artists: "artist:foo",
+		},
+	}
 	notifier := &notifierStub{}
+	generator := &generatorStub{
+		jobID: "job-1",
+		updates: []domaindraw.JobUpdate{
+			{Status: domaindraw.JobQueued, QueuePosition: 1},
+			{Status: domaindraw.JobCompleted, Image: []byte("png")},
+		},
+	}
 	service := NewService(
 		taskRepo,
 		preferences,
 		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
-		&generatorStub{
-			jobID: "job-1",
-			updates: []domaindraw.JobUpdate{
-				{Status: domaindraw.JobQueued, QueuePosition: 1},
-				{Status: domaindraw.JobCompleted, Image: []byte("png")},
-			},
-		},
+		generator,
 		notifier,
 		func() time.Time { return time.Unix(100, 0) },
 		func() string { return "task-1" },
@@ -191,6 +204,9 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 	}
 	if len(notifier.deleted) != 1 || notifier.deleted[0] != 1 {
 		t.Fatalf("expected status message 1 deleted, got %#v", notifier.deleted)
+	}
+	if generator.lastRequest.Artists != "artist:foo" {
+		t.Fatalf("expected artists forwarded to generator, got %q", generator.lastRequest.Artists)
 	}
 }
 
@@ -389,5 +405,67 @@ func TestSubmitStoresStatusMessageBeforeEnqueue(t *testing.T) {
 	}
 	if len(notifier.sentTexts) != 1 || notifier.sentTexts[0] != "已入队" {
 		t.Fatalf("unexpected queued text: %#v", notifier.sentTexts)
+	}
+}
+
+func TestSubmitAndProcessLogTaskLifecycle(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
+	preferences := &preferenceRepoStub{
+		preference: domainpreferences.Preference{
+			Shape:   domaindraw.ShapePortrait,
+			Artists: "artist:foo",
+		},
+	}
+	notifier := &notifierStub{}
+	generator := &generatorStub{
+		jobID: "job-1",
+		updates: []domaindraw.JobUpdate{
+			{Status: domaindraw.JobQueued, QueuePosition: 2},
+			{Status: domaindraw.JobCompleted, Image: []byte("png")},
+		},
+	}
+	service := NewService(
+		taskRepo,
+		preferences,
+		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		generator,
+		notifier,
+		time.Now,
+		func() string { return "task-1" },
+		time.Millisecond,
+		slog.New(slog.NewTextHandler(logBuffer, nil)),
+	)
+	service.SetScheduler(&schedulerStub{})
+
+	task, err := service.Submit(context.Background(), SubmitCommand{
+		ChatID:           100,
+		Prompt:           "draw moon",
+		RequestMessageID: 20,
+	})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := service.Process(context.Background(), task.ID); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"task queueing",
+		"prompt=\"draw moon\"",
+		"shape=portrait",
+		"artists=artist:foo",
+		"task enqueued",
+		"queue_position=1",
+		"task poll updated",
+		"status=queued",
+		"provider_job_id=job-1",
+		"task image sent",
+		"reply_to_message_id=20",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in log output, got %s", expected, logOutput)
+		}
 	}
 }
