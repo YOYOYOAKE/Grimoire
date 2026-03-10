@@ -37,3 +37,33 @@ go build -o bin/grimoire-bot ./cmd/grimoire-bot
 ```bash
 ./bin/grimoire-bot /path/to/config.yaml
 ```
+
+## Docker 部署
+
+项目已提供 [Dockerfile](/home/YOAKE/dev/Grimoire/Dockerfile) 和 [docker-compose.yaml](/home/YOAKE/dev/Grimoire/docker-compose.yaml)。
+
+首次启动：
+
+```bash
+docker compose up --build
+```
+
+容器会把程序复制到 `./data/` 后运行。第一次启动时，如果 `./data/config.yaml` 不存在，程序会自动生成模板配置并退出。
+
+编辑 `./data/config.yaml` 后，再次启动：
+
+```bash
+docker compose up -d
+```
+
+查看日志：
+
+```bash
+docker compose logs -f
+```
+
+Docker 部署下的持久化文件都在 `./data/`：
+
+- `config.yaml`：主配置
+- `runtime.json`：`/img` 维护的全局偏好
+- `grimoire-bot`：容器启动时复制出的可执行文件
