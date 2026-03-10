@@ -1,53 +1,54 @@
 package preferences
 
 import (
-	"context"
 	"testing"
-	"time"
 
 	"grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
 
 type preferenceRepoStub struct {
-	preferences map[int64]domainpreferences.UserPreference
+	preference domainpreferences.Preference
+	err        error
 }
 
-func (s *preferenceRepoStub) GetByUserID(_ context.Context, userID int64) (domainpreferences.UserPreference, error) {
-	pref, ok := s.preferences[userID]
-	if !ok {
-		return domainpreferences.UserPreference{}, ErrPreferenceNotFound
+func (s *preferenceRepoStub) Get() (domainpreferences.Preference, error) {
+	if s.err != nil {
+		return domainpreferences.Preference{}, s.err
 	}
-	return pref, nil
+	return s.preference, nil
 }
 
-func (s *preferenceRepoStub) Save(_ context.Context, preference domainpreferences.UserPreference) error {
-	s.preferences[preference.UserID] = preference
+func (s *preferenceRepoStub) Save(preference domainpreferences.Preference) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.preference = preference
 	return nil
 }
 
-func TestGetOrCreateCreatesDefaultPreference(t *testing.T) {
-	repo := &preferenceRepoStub{preferences: map[int64]domainpreferences.UserPreference{}}
-	service := NewService(repo, func() time.Time { return time.Unix(100, 0) })
+func TestGetReturnsStoredPreference(t *testing.T) {
+	repo := &preferenceRepoStub{preference: domainpreferences.DefaultPreference()}
+	service := NewService(repo)
 
-	pref, err := service.GetOrCreate(context.Background(), 42)
+	preference, err := service.Get()
 	if err != nil {
-		t.Fatalf("get or create: %v", err)
+		t.Fatalf("get: %v", err)
 	}
-	if pref.DefaultShape != draw.ShapeSquare {
-		t.Fatalf("unexpected shape: %s", pref.DefaultShape)
+	if preference.Shape != draw.ShapeSquare {
+		t.Fatalf("unexpected shape: %s", preference.Shape)
 	}
 }
 
-func TestUpdateArtist(t *testing.T) {
-	repo := &preferenceRepoStub{preferences: map[int64]domainpreferences.UserPreference{}}
-	service := NewService(repo, time.Now)
+func TestUpdateArtistsTrimsWhitespace(t *testing.T) {
+	repo := &preferenceRepoStub{preference: domainpreferences.DefaultPreference()}
+	service := NewService(repo)
 
-	pref, err := service.UpdateArtist(context.Background(), 42, " artist:foo ")
+	preference, err := service.UpdateArtists(" artist:foo ")
 	if err != nil {
-		t.Fatalf("update artist: %v", err)
+		t.Fatalf("update artists: %v", err)
 	}
-	if pref.Artist != "artist:foo" {
-		t.Fatalf("unexpected artist: %q", pref.Artist)
+	if preference.Artists != "artist:foo" {
+		t.Fatalf("unexpected artists: %q", preference.Artists)
 	}
 }

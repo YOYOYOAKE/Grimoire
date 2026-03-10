@@ -7,7 +7,7 @@ import (
 
 func TestTaskLifecycle(t *testing.T) {
 	now := time.Now()
-	task, err := NewTask("task-1", 1, 2, 3, "hello", ShapeSquare, "", now)
+	task, err := NewTask("task-1", 1, 3, "hello", ShapeSquare, "", now)
 	if err != nil {
 		t.Fatalf("new task: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestTaskLifecycle(t *testing.T) {
 
 func TestTaskRejectsDuplicateTerminalTransition(t *testing.T) {
 	now := time.Now()
-	task, err := NewTask("task-1", 1, 2, 3, "hello", ShapeSquare, "", now)
+	task, err := NewTask("task-1", 1, 3, "hello", ShapeSquare, "", now)
 	if err != nil {
 		t.Fatalf("new task: %v", err)
 	}

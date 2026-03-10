@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	preferencesapp "grimoire/internal/app/preferences"
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -39,16 +38,16 @@ func (s *taskRepoStub) Delete(_ context.Context, taskID string) error {
 }
 
 type preferenceRepoStub struct {
-	preference domainpreferences.UserPreference
+	preference domainpreferences.Preference
 	err        error
 }
 
-func (s *preferenceRepoStub) GetByUserID(_ context.Context, userID int64) (domainpreferences.UserPreference, error) {
+func (s *preferenceRepoStub) Get() (domainpreferences.Preference, error) {
 	if s.err != nil {
-		return domainpreferences.UserPreference{}, s.err
+		return domainpreferences.Preference{}, s.err
 	}
-	if s.preference.UserID == 0 {
-		return domainpreferences.UserPreference{}, preferencesapp.ErrPreferenceNotFound
+	if !s.preference.Shape.Valid() {
+		return domainpreferences.DefaultPreference(), nil
 	}
 	return s.preference, nil
 }
@@ -169,7 +168,6 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID:           1,
-		UserID:           2,
 		Prompt:           "moon",
 		RequestMessageID: 3,
 	})
@@ -212,7 +210,6 @@ func TestProcessFailureDeletesTask(t *testing.T) {
 	service.SetScheduler(&schedulerStub{})
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID: 1,
-		UserID: 2,
 		Prompt: "moon",
 	})
 	if err != nil {
@@ -248,7 +245,6 @@ func TestProcessSendPhotoFailureDeletesTask(t *testing.T) {
 	service.SetScheduler(&schedulerStub{})
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID: 1,
-		UserID: 2,
 		Prompt: "moon",
 	})
 	if err != nil {
@@ -287,7 +283,6 @@ func TestProcessSendsPhotoWhenStatusMessageMissing(t *testing.T) {
 	service.SetScheduler(&schedulerStub{})
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID: 1,
-		UserID: 2,
 		Prompt: "moon",
 	})
 	if err != nil {
@@ -333,7 +328,6 @@ func TestProcessDoesNotSendReplacementStatusMessageOnEditFailure(t *testing.T) {
 	service.SetScheduler(&schedulerStub{})
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID:           1,
-		UserID:           2,
 		Prompt:           "moon",
 		RequestMessageID: 3,
 	})
@@ -384,7 +378,6 @@ func TestSubmitStoresStatusMessageBeforeEnqueue(t *testing.T) {
 
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID:           1,
-		UserID:           2,
 		Prompt:           "moon",
 		RequestMessageID: 3,
 	})

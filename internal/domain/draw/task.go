@@ -37,7 +37,6 @@ const (
 type Task struct {
 	ID               string
 	ChatID           int64
-	UserID           int64
 	RequestMessageID int64
 	StatusMessageID  int64
 	Status           Status
@@ -71,7 +70,7 @@ type JobUpdate struct {
 	Error         string
 }
 
-func NewTask(id string, chatID, userID, requestMessageID int64, prompt string, shape Shape, artist string, now time.Time) (Task, error) {
+func NewTask(id string, chatID, requestMessageID int64, prompt string, shape Shape, artist string, now time.Time) (Task, error) {
 	id = strings.TrimSpace(id)
 	prompt = strings.TrimSpace(prompt)
 	artist = strings.TrimSpace(artist)
@@ -80,9 +79,6 @@ func NewTask(id string, chatID, userID, requestMessageID int64, prompt string, s
 	}
 	if chatID == 0 {
 		return Task{}, fmt.Errorf("chat id is required")
-	}
-	if userID == 0 {
-		return Task{}, fmt.Errorf("user id is required")
 	}
 	if prompt == "" {
 		return Task{}, fmt.Errorf("prompt is required")
@@ -97,7 +93,6 @@ func NewTask(id string, chatID, userID, requestMessageID int64, prompt string, s
 	return Task{
 		ID:               id,
 		ChatID:           chatID,
-		UserID:           userID,
 		RequestMessageID: requestMessageID,
 		Prompt:           prompt,
 		Shape:            shape,

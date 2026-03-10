@@ -18,7 +18,7 @@ type TaskRepository interface {
 }
 
 type PreferenceRepository interface {
-	GetByUserID(ctx context.Context, userID int64) (domainpreferences.UserPreference, error)
+	Get() (domainpreferences.Preference, error)
 }
 
 type Scheduler interface {

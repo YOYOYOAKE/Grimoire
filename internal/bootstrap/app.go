@@ -2,13 +2,16 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	xianyun "grimoire/internal/adapters/imagegen/xianyun"
 	openai "grimoire/internal/adapters/llm/openai"
 	memoryqueue "grimoire/internal/adapters/queue/memory"
 	memoryrepo "grimoire/internal/adapters/repository/memory"
+	runtimerepo "grimoire/internal/adapters/repository/runtime"
 	"grimoire/internal/adapters/telegram"
 	drawapp "grimoire/internal/app/draw"
 	preferencesapp "grimoire/internal/app/preferences"
@@ -25,10 +28,13 @@ type App struct {
 
 func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 	taskRepo := memoryrepo.NewTaskRepository()
-	preferenceRepo := memoryrepo.NewPreferenceRepository()
+	preferenceRepo, err := runtimerepo.NewPreferenceRepository(os.Executable)
+	if err != nil {
+		return nil, fmt.Errorf("init runtime preference repository: %w", err)
+	}
 
 	telegramBot := telegram.NewBot(cfg, logger)
-	preferenceService := preferencesapp.NewService(preferenceRepo, func() time.Time { return time.Now() })
+	preferenceService := preferencesapp.NewService(preferenceRepo)
 	drawService := drawapp.NewService(
 		taskRepo,
 		preferenceRepo,

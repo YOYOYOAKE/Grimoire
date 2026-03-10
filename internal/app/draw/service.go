@@ -8,13 +8,11 @@ import (
 	"strings"
 	"time"
 
-	preferencesapp "grimoire/internal/app/preferences"
 	domaindraw "grimoire/internal/domain/draw"
 )
 
 type SubmitCommand struct {
 	ChatID           int64
-	UserID           int64
 	Prompt           string
 	RequestMessageID int64
 }
@@ -77,7 +75,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		return domaindraw.Task{}, fmt.Errorf("scheduler is not configured")
 	}
 
-	shape, artist, err := s.preferenceSnapshot(ctx, command.UserID)
+	shape, artist, err := s.preferenceSnapshot()
 	if err != nil {
 		return domaindraw.Task{}, err
 	}
@@ -85,7 +83,6 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 	task, err := domaindraw.NewTask(
 		s.idGenerator(),
 		command.ChatID,
-		command.UserID,
 		command.RequestMessageID,
 		command.Prompt,
 		shape,
@@ -211,16 +208,12 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	}
 }
 
-func (s *Service) preferenceSnapshot(ctx context.Context, userID int64) (domaindraw.Shape, string, error) {
-	preference, err := s.preferences.GetByUserID(ctx, userID)
-	switch {
-	case err == nil:
-		return preference.DefaultShape, preference.Artist, nil
-	case errors.Is(err, preferencesapp.ErrPreferenceNotFound):
-		return domaindraw.ShapeSquare, "", nil
-	default:
+func (s *Service) preferenceSnapshot() (domaindraw.Shape, string, error) {
+	preference, err := s.preferences.Get()
+	if err != nil {
 		return "", "", err
 	}
+	return preference.Shape, preference.Artists, nil
 }
 
 func (s *Service) persistAndNotify(ctx context.Context, task *domaindraw.Task, text string) error {

@@ -1,10 +1,7 @@
 package preferences
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"time"
 
 	"grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
@@ -12,67 +9,52 @@ import (
 
 type Service struct {
 	repository Repository
-	now        func() time.Time
 }
 
-func NewService(repository Repository, now func() time.Time) *Service {
-	if now == nil {
-		now = time.Now
-	}
-	return &Service{repository: repository, now: now}
+func NewService(repository Repository) *Service {
+	return &Service{repository: repository}
 }
 
-func (s *Service) GetOrCreate(ctx context.Context, userID int64) (domainpreferences.UserPreference, error) {
-	pref, err := s.repository.GetByUserID(ctx, userID)
-	if err == nil {
-		return pref, nil
-	}
-	if !errors.Is(err, ErrPreferenceNotFound) {
-		return domainpreferences.UserPreference{}, err
-	}
-
-	pref = domainpreferences.NewUserPreference(userID, s.now())
-	if err := s.repository.Save(ctx, pref); err != nil {
-		return domainpreferences.UserPreference{}, err
-	}
-	return pref, nil
+func (s *Service) Get() (domainpreferences.Preference, error) {
+	return s.repository.Get()
 }
 
-func (s *Service) UpdateShape(ctx context.Context, userID int64, shape draw.Shape) (domainpreferences.UserPreference, error) {
+func (s *Service) UpdateShape(shape draw.Shape) (domainpreferences.Preference, error) {
 	if !shape.Valid() {
-		return domainpreferences.UserPreference{}, fmt.Errorf("invalid shape %q", shape)
+		return domainpreferences.Preference{}, fmt.Errorf("invalid shape %q", shape)
 	}
-	pref, err := s.GetOrCreate(ctx, userID)
+
+	preference, err := s.repository.Get()
 	if err != nil {
-		return domainpreferences.UserPreference{}, err
+		return domainpreferences.Preference{}, err
 	}
-	pref.SetShape(shape, s.now())
-	if err := s.repository.Save(ctx, pref); err != nil {
-		return domainpreferences.UserPreference{}, err
+	preference.SetShape(shape)
+	if err := s.repository.Save(preference); err != nil {
+		return domainpreferences.Preference{}, err
 	}
-	return pref, nil
+	return preference, nil
 }
 
-func (s *Service) UpdateArtist(ctx context.Context, userID int64, artist string) (domainpreferences.UserPreference, error) {
-	pref, err := s.GetOrCreate(ctx, userID)
+func (s *Service) UpdateArtists(artists string) (domainpreferences.Preference, error) {
+	preference, err := s.repository.Get()
 	if err != nil {
-		return domainpreferences.UserPreference{}, err
+		return domainpreferences.Preference{}, err
 	}
-	pref.SetArtist(artist, s.now())
-	if err := s.repository.Save(ctx, pref); err != nil {
-		return domainpreferences.UserPreference{}, err
+	preference.SetArtists(artists)
+	if err := s.repository.Save(preference); err != nil {
+		return domainpreferences.Preference{}, err
 	}
-	return pref, nil
+	return preference, nil
 }
 
-func (s *Service) ClearArtist(ctx context.Context, userID int64) (domainpreferences.UserPreference, error) {
-	pref, err := s.GetOrCreate(ctx, userID)
+func (s *Service) ClearArtists() (domainpreferences.Preference, error) {
+	preference, err := s.repository.Get()
 	if err != nil {
-		return domainpreferences.UserPreference{}, err
+		return domainpreferences.Preference{}, err
 	}
-	pref.ClearArtist(s.now())
-	if err := s.repository.Save(ctx, pref); err != nil {
-		return domainpreferences.UserPreference{}, err
+	preference.ClearArtists()
+	if err := s.repository.Save(preference); err != nil {
+		return domainpreferences.Preference{}, err
 	}
-	return pref, nil
+	return preference, nil
 }

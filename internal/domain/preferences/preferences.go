@@ -2,47 +2,30 @@ package preferences
 
 import (
 	"strings"
-	"time"
 
 	"grimoire/internal/domain/draw"
 )
 
-type UserPreference struct {
-	UserID       int64
-	DefaultShape draw.Shape
-	Artist       string
-	UpdatedAt    time.Time
+type Preference struct {
+	Shape   draw.Shape
+	Artists string
 }
 
-func NewUserPreference(userID int64, now time.Time) UserPreference {
-	if now.IsZero() {
-		now = time.Now()
-	}
-	return UserPreference{
-		UserID:       userID,
-		DefaultShape: draw.ShapeSquare,
-		UpdatedAt:    now,
+func DefaultPreference() Preference {
+	return Preference{
+		Shape:   draw.ShapeSquare,
+		Artists: "",
 	}
 }
 
-func (p *UserPreference) SetShape(shape draw.Shape, now time.Time) {
-	p.DefaultShape = shape
-	p.touch(now)
+func (p *Preference) SetShape(shape draw.Shape) {
+	p.Shape = shape
 }
 
-func (p *UserPreference) SetArtist(artist string, now time.Time) {
-	p.Artist = strings.TrimSpace(artist)
-	p.touch(now)
+func (p *Preference) SetArtists(artists string) {
+	p.Artists = strings.TrimSpace(artists)
 }
 
-func (p *UserPreference) ClearArtist(now time.Time) {
-	p.Artist = ""
-	p.touch(now)
-}
-
-func (p *UserPreference) touch(now time.Time) {
-	if now.IsZero() {
-		now = time.Now()
-	}
-	p.UpdatedAt = now
+func (p *Preference) ClearArtists() {
+	p.Artists = ""
 }

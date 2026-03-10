@@ -1,13 +1,14 @@
 # Grimoire v2
 
-Grimoire v2 是一个纯内存的 Telegram 绘图机器人：
+Grimoire v2 是一个只服务 `telegram.admin_user_id` 的 Telegram 绘图机器人：
 
 - 接收 Telegram 文本消息
 - 调用 OpenAI 兼容接口翻译提示词
 - 调用 Xianyun NovelAI 中继生成图片
 - 直接把图片发送回 Telegram
+- 通过 `/img` 维护全局默认尺寸和画师串
 
-运行时不使用 SQLite，不做任务恢复。任务和 `/img` 偏好都只保存在内存里，进程重启后会清空。
+运行时不使用 SQLite，不做任务恢复。绘图任务只保存在内存里，进程重启后会清空。`/img` 的全局偏好会保存在可执行文件同目录下的 `runtime.json` 中。
 
 ## 构建
 

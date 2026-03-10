@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	drawapp "grimoire/internal/app/draw"
 	"grimoire/internal/config"
@@ -30,30 +29,30 @@ func (m *drawServiceMock) Submit(_ context.Context, command drawapp.SubmitComman
 }
 
 type preferenceServiceMock struct {
-	pref domainpreferences.UserPreference
+	pref domainpreferences.Preference
 }
 
-func (m *preferenceServiceMock) GetOrCreate(_ context.Context, userID int64) (domainpreferences.UserPreference, error) {
-	if m.pref.UserID == 0 {
-		m.pref = domainpreferences.NewUserPreference(userID, time.Now())
+func (m *preferenceServiceMock) Get() (domainpreferences.Preference, error) {
+	if !m.pref.Shape.Valid() {
+		m.pref = domainpreferences.DefaultPreference()
 	}
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) UpdateShape(_ context.Context, userID int64, shape domaindraw.Shape) (domainpreferences.UserPreference, error) {
-	m.pref = domainpreferences.NewUserPreference(userID, time.Now())
-	m.pref.DefaultShape = shape
+func (m *preferenceServiceMock) UpdateShape(shape domaindraw.Shape) (domainpreferences.Preference, error) {
+	m.pref = domainpreferences.DefaultPreference()
+	m.pref.Shape = shape
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) UpdateArtist(_ context.Context, userID int64, artist string) (domainpreferences.UserPreference, error) {
-	m.pref = domainpreferences.NewUserPreference(userID, time.Now())
-	m.pref.Artist = strings.TrimSpace(artist)
+func (m *preferenceServiceMock) UpdateArtists(artist string) (domainpreferences.Preference, error) {
+	m.pref = domainpreferences.DefaultPreference()
+	m.pref.Artists = strings.TrimSpace(artist)
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) ClearArtist(_ context.Context, userID int64) (domainpreferences.UserPreference, error) {
-	m.pref = domainpreferences.NewUserPreference(userID, time.Now())
+func (m *preferenceServiceMock) ClearArtists() (domainpreferences.Preference, error) {
+	m.pref = domainpreferences.DefaultPreference()
 	return m.pref, nil
 }
 
@@ -124,8 +123,8 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 		Data: cbShapePortrait,
 	})
 
-	if prefService.pref.DefaultShape != domaindraw.ShapePortrait {
-		t.Fatalf("unexpected shape: %s", prefService.pref.DefaultShape)
+	if prefService.pref.Shape != domaindraw.ShapePortrait {
+		t.Fatalf("unexpected shape: %s", prefService.pref.Shape)
 	}
 	if !strings.Contains(buffer.String(), "editMessageText") {
 		t.Fatalf("expected edit message request, got %s", buffer.String())
@@ -134,7 +133,7 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 
 func TestPendingArtistFlow(t *testing.T) {
 	bot, _, prefService, _ := newTestBot(t)
-	bot.setPendingArtist(1)
+	bot.setPendingArtist()
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 11,
 		From:      &User{ID: 1},
@@ -142,16 +141,16 @@ func TestPendingArtistFlow(t *testing.T) {
 		Text:      " artist:foo ",
 	})
 
-	if prefService.pref.Artist != "artist:foo" {
-		t.Fatalf("unexpected artist: %q", prefService.pref.Artist)
+	if prefService.pref.Artists != "artist:foo" {
+		t.Fatalf("unexpected artist: %q", prefService.pref.Artists)
 	}
-	if bot.isPendingArtist(1) {
+	if bot.isPendingArtist() {
 		t.Fatal("expected pending artist cleared")
 	}
 }
 
 func TestResultMessageHasNoRetryButtons(t *testing.T) {
-	pref := domainpreferences.NewUserPreference(1, time.Now())
+	pref := domainpreferences.DefaultPreference()
 	text := buildImageMenuText("", pref)
 	if strings.Contains(text, "重新生成") {
 		t.Fatalf("unexpected retry text: %s", text)

@@ -31,10 +31,10 @@ type DrawService interface {
 }
 
 type PreferenceService interface {
-	GetOrCreate(ctx context.Context, userID int64) (domainpreferences.UserPreference, error)
-	UpdateShape(ctx context.Context, userID int64, shape domaindraw.Shape) (domainpreferences.UserPreference, error)
-	UpdateArtist(ctx context.Context, userID int64, artist string) (domainpreferences.UserPreference, error)
-	ClearArtist(ctx context.Context, userID int64) (domainpreferences.UserPreference, error)
+	Get() (domainpreferences.Preference, error)
+	UpdateShape(shape domaindraw.Shape) (domainpreferences.Preference, error)
+	UpdateArtists(artists string) (domainpreferences.Preference, error)
+	ClearArtists() (domainpreferences.Preference, error)
 }
 
 type Bot struct {
@@ -46,17 +46,16 @@ type Bot struct {
 	preferenceService PreferenceService
 
 	pendingArtistMu sync.Mutex
-	pendingArtist   map[int64]struct{}
+	pendingArtist   bool
 }
 
 func NewBot(cfg config.Config, logger *slog.Logger) *Bot {
 	return &Bot{
-		cfg:           cfg,
-		logger:        logger,
-		httpClient:    httpclient.New(cfg.Telegram.TimeoutSec, cfg.Telegram.Proxy, logger, "telegram"),
-		pendingArtist: make(map[int64]struct{}),
-		updateOffset:  0,
-		drawService:   nil,
+		cfg:          cfg,
+		logger:       logger,
+		httpClient:   httpclient.New(cfg.Telegram.TimeoutSec, cfg.Telegram.Proxy, logger, "telegram"),
+		updateOffset: 0,
+		drawService:  nil,
 	}
 }
 
@@ -137,26 +136,26 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	command := firstWord(text)
 	switch command {
 	case "/start":
-		b.clearPendingArtist(message.From.ID)
+		b.clearPendingArtist()
 		_, _ = b.sendMessage(ctx, message.Chat.ID, buildStartText(), nil, 0)
 		return
 	case "/img":
-		b.clearPendingArtist(message.From.ID)
-		b.sendImageMenu(ctx, message.Chat.ID, message.From.ID, 0, "")
+		b.clearPendingArtist()
+		b.sendImageMenu(ctx, message.Chat.ID, 0, "")
 		return
 	}
 
-	if b.isPendingArtist(message.From.ID) {
+	if b.isPendingArtist() {
 		if text == "" {
 			_, _ = b.sendMessage(ctx, message.Chat.ID, "请输入新的画师串，或发送 /start 取消。", nil, 0)
 			return
 		}
-		b.clearPendingArtist(message.From.ID)
-		if _, err := b.preferenceService.UpdateArtist(ctx, message.From.ID, text); err != nil {
+		b.clearPendingArtist()
+		if _, err := b.preferenceService.UpdateArtists(text); err != nil {
 			_, _ = b.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("设置画师串失败: %v", err), nil, 0)
 			return
 		}
-		b.sendImageMenu(ctx, message.Chat.ID, message.From.ID, 0, "画师串已更新。")
+		b.sendImageMenu(ctx, message.Chat.ID, 0, "全局画师串已更新。")
 		return
 	}
 
@@ -169,7 +168,6 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	}
 	if _, err := b.drawService.Submit(ctx, drawapp.SubmitCommand{
 		ChatID:           message.Chat.ID,
-		UserID:           message.From.ID,
 		Prompt:           text,
 		RequestMessageID: message.MessageID,
 	}); err != nil {
@@ -188,24 +186,24 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	}
 
 	var (
-		pref domainpreferences.UserPreference
+		pref domainpreferences.Preference
 		err  error
 	)
 
 	switch query.Data {
 	case cbShapeSquare:
-		pref, err = b.preferenceService.UpdateShape(ctx, query.From.ID, domaindraw.ShapeSquare)
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSquare)
 	case cbShapeLandscape:
-		pref, err = b.preferenceService.UpdateShape(ctx, query.From.ID, domaindraw.ShapeLandscape)
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLandscape)
 	case cbShapePortrait:
-		pref, err = b.preferenceService.UpdateShape(ctx, query.From.ID, domaindraw.ShapePortrait)
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapePortrait)
 	case cbSetArtist:
-		b.setPendingArtist(query.From.ID)
+		b.setPendingArtist()
 		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的画师串", false)
 		_, _ = b.sendMessage(ctx, query.Message.Chat.ID, "请发送新的画师串，或发送 /start 取消。", nil, 0)
 		return
 	case cbClearArtist:
-		pref, err = b.preferenceService.ClearArtist(ctx, query.From.ID)
+		pref, err = b.preferenceService.ClearArtists()
 	default:
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 		return
@@ -219,8 +217,8 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildImageMenuText("", pref), imageMenuMarkup())
 }
 
-func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, userID int64, messageID int64, notice string) {
-	pref, err := b.preferenceService.GetOrCreate(ctx, userID)
+func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, messageID int64, notice string) {
+	pref, err := b.preferenceService.Get()
 	if err != nil {
 		_, _ = b.sendMessage(ctx, chatID, fmt.Sprintf("加载偏好失败: %v", err), nil, 0)
 		return
@@ -238,31 +236,31 @@ func (b *Bot) isAdmin(userID int64) bool {
 	return b.cfg.Telegram.AdminUserID == userID
 }
 
-func (b *Bot) setPendingArtist(userID int64) {
+func (b *Bot) setPendingArtist() {
 	b.pendingArtistMu.Lock()
-	b.pendingArtist[userID] = struct{}{}
+	b.pendingArtist = true
 	b.pendingArtistMu.Unlock()
 }
 
-func (b *Bot) clearPendingArtist(userID int64) {
+func (b *Bot) clearPendingArtist() {
 	b.pendingArtistMu.Lock()
-	delete(b.pendingArtist, userID)
+	b.pendingArtist = false
 	b.pendingArtistMu.Unlock()
 }
 
-func (b *Bot) isPendingArtist(userID int64) bool {
+func (b *Bot) isPendingArtist() bool {
 	b.pendingArtistMu.Lock()
-	_, ok := b.pendingArtist[userID]
+	ok := b.pendingArtist
 	b.pendingArtistMu.Unlock()
 	return ok
 }
 
 func buildStartText() string {
-	return "Grimoire v2\n\n发送任意文本即可开始绘图。\n发送 /img 可修改默认图像尺寸和画师串。"
+	return "Grimoire v2\n\n发送任意文本即可开始绘图。\n发送 /img 可修改全局默认图像尺寸和画师串。"
 }
 
-func buildImageMenuText(notice string, pref domainpreferences.UserPreference) string {
-	text := fmt.Sprintf("绘图偏好\n当前尺寸: %s\n当前画师串: %s", pref.DefaultShape, displayArtist(pref.Artist))
+func buildImageMenuText(notice string, pref domainpreferences.Preference) string {
+	text := fmt.Sprintf("全局绘图偏好\n当前尺寸: %s\n当前画师串: %s", pref.Shape, displayArtist(pref.Artists))
 	if strings.TrimSpace(notice) == "" {
 		return text
 	}
