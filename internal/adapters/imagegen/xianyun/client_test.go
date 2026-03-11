@@ -28,6 +28,31 @@ func TestResolveDimensions(t *testing.T) {
 	}
 }
 
+func TestResolveDimensionsSupportsSmallAndLargeShapes(t *testing.T) {
+	testCases := []struct {
+		shape  draw.Shape
+		width  int
+		height int
+	}{
+		{shape: draw.ShapeSmallSquare, width: 640, height: 640},
+		{shape: draw.ShapeSmallLandscape, width: 768, height: 512},
+		{shape: draw.ShapeSmallPortrait, width: 512, height: 768},
+		{shape: draw.ShapeLargeSquare, width: 1472, height: 1472},
+		{shape: draw.ShapeLargeLandscape, width: 1536, height: 1024},
+		{shape: draw.ShapeLargePortrait, width: 1014, height: 1536},
+	}
+
+	for _, tc := range testCases {
+		width, height, err := resolveDimensions(tc.shape)
+		if err != nil {
+			t.Fatalf("resolve dimensions for %s: %v", tc.shape, err)
+		}
+		if width != tc.width || height != tc.height {
+			t.Fatalf("unexpected dimensions for %s: %dx%d", tc.shape, width, height)
+		}
+	}
+}
+
 func TestSubmitLogsRequestMetadata(t *testing.T) {
 	logBuffer := &bytes.Buffer{}
 	client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {

@@ -13,7 +13,7 @@ type Preference struct {
 
 func DefaultPreference() Preference {
 	return Preference{
-		Shape:   draw.ShapeSquare,
+		Shape:   draw.ShapeSmallSquare,
 		Artists: "",
 	}
 }

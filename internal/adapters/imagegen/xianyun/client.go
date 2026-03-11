@@ -177,12 +177,24 @@ func (c *Client) Poll(ctx context.Context, jobID string) (domaindraw.JobUpdate, 
 
 func resolveDimensions(shape domaindraw.Shape) (int, int, error) {
 	switch shape {
+	case domaindraw.ShapeSmallSquare:
+		return 640, 640, nil
+	case domaindraw.ShapeSmallLandscape:
+		return 768, 512, nil
+	case domaindraw.ShapeSmallPortrait:
+		return 512, 768, nil
 	case domaindraw.ShapeSquare:
 		return 1024, 1024, nil
 	case domaindraw.ShapeLandscape:
 		return 1216, 832, nil
 	case domaindraw.ShapePortrait:
 		return 832, 1216, nil
+	case domaindraw.ShapeLargeSquare:
+		return 1472, 1472, nil
+	case domaindraw.ShapeLargeLandscape:
+		return 1536, 1024, nil
+	case domaindraw.ShapeLargePortrait:
+		return 1014, 1536, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported shape %q", shape)
 	}

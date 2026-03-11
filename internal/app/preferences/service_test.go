@@ -35,7 +35,7 @@ func TestGetReturnsStoredPreference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if preference.Shape != draw.ShapeSquare {
+	if preference.Shape != draw.ShapeSmallSquare {
 		t.Fatalf("unexpected shape: %s", preference.Shape)
 	}
 }

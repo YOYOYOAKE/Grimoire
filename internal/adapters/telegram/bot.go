@@ -21,11 +21,17 @@ const apiBase = "https://api.telegram.org"
 const officialNAIImageBaseURL = "https://image.novelai.net"
 
 const (
-	cbShapeSquare    = "img:shape:square"
-	cbShapeLandscape = "img:shape:landscape"
-	cbShapePortrait  = "img:shape:portrait"
-	cbSetArtist      = "img:artist:set"
-	cbClearArtist    = "img:artist:clear"
+	cbShapeSmallPortrait  = "img:shape:small-portrait"
+	cbShapeSmallLandscape = "img:shape:small-landscape"
+	cbShapeSmallSquare    = "img:shape:small-square"
+	cbShapePortrait       = "img:shape:portrait"
+	cbShapeLandscape      = "img:shape:landscape"
+	cbShapeSquare         = "img:shape:square"
+	cbShapeLargePortrait  = "img:shape:large-portrait"
+	cbShapeLargeLandscape = "img:shape:large-landscape"
+	cbShapeLargeSquare    = "img:shape:large-square"
+	cbSetArtist           = "img:artist:set"
+	cbClearArtist         = "img:artist:clear"
 )
 
 type DrawService interface {
@@ -206,12 +212,24 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	)
 
 	switch query.Data {
+	case cbShapeSmallPortrait:
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSmallPortrait)
+	case cbShapeSmallLandscape:
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSmallLandscape)
+	case cbShapeSmallSquare:
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSmallSquare)
 	case cbShapeSquare:
 		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSquare)
 	case cbShapeLandscape:
 		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLandscape)
 	case cbShapePortrait:
 		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapePortrait)
+	case cbShapeLargePortrait:
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargePortrait)
+	case cbShapeLargeLandscape:
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargeLandscape)
+	case cbShapeLargeSquare:
+		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargeSquare)
 	case cbSetArtist:
 		b.setPendingArtist()
 		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的画师串", false)
@@ -275,7 +293,7 @@ func buildStartText() string {
 }
 
 func buildImageMenuText(notice string, pref domainpreferences.Preference) string {
-	text := fmt.Sprintf("全局绘图偏好\n当前尺寸: %s\n当前画师串: %s", pref.Shape, displayArtist(pref.Artists))
+	text := fmt.Sprintf("全局绘图偏好\n当前尺寸: %s\n当前画师串: %s", pref.Shape.Label(), displayArtist(pref.Artists))
 	if strings.TrimSpace(notice) == "" {
 		return text
 	}
@@ -286,9 +304,19 @@ func imageMenuMarkup() *InlineKeyboardMarkup {
 	return &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{
 			{
-				{Text: "方形", CallbackData: cbShapeSquare},
-				{Text: "横向", CallbackData: cbShapeLandscape},
-				{Text: "纵向", CallbackData: cbShapePortrait},
+				{Text: "Small Portrait", CallbackData: cbShapeSmallPortrait},
+				{Text: "Small Landscape", CallbackData: cbShapeSmallLandscape},
+				{Text: "Small Square", CallbackData: cbShapeSmallSquare},
+			},
+			{
+				{Text: "Normal Portrait", CallbackData: cbShapePortrait},
+				{Text: "Normal Landscape", CallbackData: cbShapeLandscape},
+				{Text: "Normal Square", CallbackData: cbShapeSquare},
+			},
+			{
+				{Text: "Large Portrait", CallbackData: cbShapeLargePortrait},
+				{Text: "Large Landscape", CallbackData: cbShapeLargeLandscape},
+				{Text: "Large Square", CallbackData: cbShapeLargeSquare},
 			},
 			{
 				{Text: "设置画师串", CallbackData: cbSetArtist},
