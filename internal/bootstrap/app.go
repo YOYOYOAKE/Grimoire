@@ -60,6 +60,7 @@ func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 	drawService.SetScheduler(worker)
 	telegramBot.SetDrawService(drawService)
 	telegramBot.SetPreferenceService(preferenceService)
+	telegramBot.SetBalanceService(imageGenerator)
 
 	return &App{
 		bot:    telegramBot,

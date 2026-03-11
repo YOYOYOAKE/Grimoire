@@ -18,6 +18,7 @@ func (b *Bot) setMyCommands(ctx context.Context) error {
 		"commands": []map[string]string{
 			{"command": "start", "description": "机器人介绍"},
 			{"command": "img", "description": "绘图偏好"},
+			{"command": "balance", "description": "查询 NAI 余额"},
 		},
 	}
 	body, err := json.Marshal(payload)

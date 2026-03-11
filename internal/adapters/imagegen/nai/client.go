@@ -16,6 +16,7 @@ import (
 
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
+	domainnai "grimoire/internal/domain/nai"
 	"grimoire/internal/platform/httpclient"
 )
 
@@ -114,6 +115,57 @@ func (c *Client) Poll(_ context.Context, jobID string) (domaindraw.JobUpdate, er
 		Status:        domaindraw.JobCompleted,
 		QueuePosition: 0,
 		Image:         append([]byte(nil), image...),
+	}, nil
+}
+
+func (c *Client) GetBalance(ctx context.Context) (domainnai.AccountBalance, error) {
+	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.NAI.TimeoutSec)*time.Second)
+	defer cancel()
+
+	endpoint := strings.TrimRight(c.cfg.NAI.BaseURL, "/") + "/user/data"
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return domainnai.AccountBalance{}, fmt.Errorf("create user data request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.cfg.NAI.APIKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return domainnai.AccountBalance{}, fmt.Errorf("query user data: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return domainnai.AccountBalance{}, fmt.Errorf("read user data response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return domainnai.AccountBalance{}, fmt.Errorf("user data status=%d body=%s", resp.StatusCode, truncate(string(body), 400))
+	}
+
+	var out struct {
+		Subscription struct {
+			Tier              int  `json:"tier"`
+			Active            bool `json:"active"`
+			TrainingStepsLeft struct {
+				FixedTrainingStepsLeft int `json:"fixedTrainingStepsLeft"`
+				PurchasedTrainingSteps int `json:"purchasedTrainingSteps"`
+			} `json:"trainingStepsLeft"`
+		} `json:"subscription"`
+		Information struct {
+			TrialImagesLeft int `json:"trialImagesLeft"`
+		} `json:"information"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return domainnai.AccountBalance{}, fmt.Errorf("decode user data response: %w", err)
+	}
+
+	return domainnai.AccountBalance{
+		PurchasedTrainingSteps: out.Subscription.TrainingStepsLeft.PurchasedTrainingSteps,
+		FixedTrainingStepsLeft: out.Subscription.TrainingStepsLeft.FixedTrainingStepsLeft,
+		TrialImagesLeft:        out.Information.TrialImagesLeft,
+		SubscriptionTier:       out.Subscription.Tier,
+		SubscriptionActive:     out.Subscription.Active,
 	}, nil
 }
 

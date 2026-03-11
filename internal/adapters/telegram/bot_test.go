@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	drawapp "grimoire/internal/app/draw"
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
+	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
 
@@ -30,6 +32,11 @@ func (m *drawServiceMock) Submit(_ context.Context, command drawapp.SubmitComman
 
 type preferenceServiceMock struct {
 	pref domainpreferences.Preference
+}
+
+type balanceServiceMock struct {
+	balance domainnai.AccountBalance
+	err     error
 }
 
 func (m *preferenceServiceMock) Get() (domainpreferences.Preference, error) {
@@ -56,7 +63,14 @@ func (m *preferenceServiceMock) ClearArtists() (domainpreferences.Preference, er
 	return m.pref, nil
 }
 
-func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *bytes.Buffer) {
+func (m *balanceServiceMock) GetBalance(_ context.Context) (domainnai.AccountBalance, error) {
+	if m.err != nil {
+		return domainnai.AccountBalance{}, m.err
+	}
+	return m.balance, nil
+}
+
+func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
 	t.Helper()
 	buffer := &bytes.Buffer{}
 	bot := NewBot(config.Config{
@@ -89,13 +103,23 @@ func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *
 
 	drawService := &drawServiceMock{}
 	prefService := &preferenceServiceMock{}
+	balanceService := &balanceServiceMock{
+		balance: domainnai.AccountBalance{
+			PurchasedTrainingSteps: 456,
+			FixedTrainingStepsLeft: 23,
+			TrialImagesLeft:        12,
+			SubscriptionTier:       1,
+			SubscriptionActive:     true,
+		},
+	}
 	bot.SetDrawService(drawService)
 	bot.SetPreferenceService(prefService)
-	return bot, drawService, prefService, buffer
+	bot.SetBalanceService(balanceService)
+	return bot, drawService, prefService, balanceService, buffer
 }
 
 func TestHandleMessageSubmitsDrawTask(t *testing.T) {
-	bot, drawService, _, _ := newTestBot(t)
+	bot, drawService, _, _, _ := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 10,
 		From:      &User{ID: 1},
@@ -112,7 +136,7 @@ func TestHandleMessageSubmitsDrawTask(t *testing.T) {
 }
 
 func TestImgCallbackUpdatesShape(t *testing.T) {
-	bot, _, prefService, buffer := newTestBot(t)
+	bot, _, prefService, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-1",
 		From: User{ID: 1},
@@ -132,7 +156,7 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 }
 
 func TestPendingArtistFlow(t *testing.T) {
-	bot, _, prefService, _ := newTestBot(t)
+	bot, _, prefService, _, _ := newTestBot(t)
 	bot.setPendingArtist()
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 11,
@@ -165,7 +189,7 @@ func TestResultMessageHasNoRetryButtons(t *testing.T) {
 }
 
 func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
-	bot, _, _, buffer := newTestBot(t)
+	bot, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.SendPhoto(context.Background(), 100, 20, "task.png", "", []byte("png")); err != nil {
 		t.Fatalf("send photo: %v", err)
@@ -184,7 +208,7 @@ func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
 }
 
 func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
-	bot, _, _, buffer := newTestBot(t)
+	bot, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.DeleteMessage(context.Background(), 100, 20); err != nil {
 		t.Fatalf("delete message: %v", err)
@@ -196,5 +220,57 @@ func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
 	}
 	if !strings.Contains(logOutput, `"message_id":20`) {
 		t.Fatalf("expected message id payload, got %s", logOutput)
+	}
+}
+
+func TestHandleBalanceCommandSendsBalance(t *testing.T) {
+	bot, _, _, _, buffer := newTestBot(t)
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 12,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/balance",
+	})
+
+	logOutput := buffer.String()
+	for _, expected := range []string{
+		"sendMessage",
+		`"text":"NAI 余额`,
+		`购买余额: 456`,
+		`月度余额: 23`,
+		`试用剩余图片: 12`,
+		`订阅: 已激活 (tier=1)`,
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in output, got %s", expected, logOutput)
+		}
+	}
+}
+
+func TestHandleBalanceCommandSendsError(t *testing.T) {
+	bot, _, _, balanceService, buffer := newTestBot(t)
+	balanceService.err = errors.New("boom")
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 12,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/balance",
+	})
+
+	if !strings.Contains(buffer.String(), `查询余额失败: boom`) {
+		t.Fatalf("expected balance error in output, got %s", buffer.String())
+	}
+}
+
+func TestSetMyCommandsIncludesBalance(t *testing.T) {
+	bot, _, _, _, buffer := newTestBot(t)
+
+	if err := bot.setMyCommands(context.Background()); err != nil {
+		t.Fatalf("set commands: %v", err)
+	}
+
+	if !strings.Contains(buffer.String(), `"command":"balance"`) {
+		t.Fatalf("expected balance command in payload, got %s", buffer.String())
 	}
 }

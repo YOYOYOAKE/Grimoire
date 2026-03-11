@@ -12,6 +12,7 @@ import (
 	drawapp "grimoire/internal/app/draw"
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
+	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
 	"grimoire/internal/platform/httpclient"
 )
@@ -37,6 +38,10 @@ type PreferenceService interface {
 	ClearArtists() (domainpreferences.Preference, error)
 }
 
+type BalanceService interface {
+	GetBalance(ctx context.Context) (domainnai.AccountBalance, error)
+}
+
 type Bot struct {
 	cfg               config.Config
 	logger            *slog.Logger
@@ -44,6 +49,7 @@ type Bot struct {
 	updateOffset      int64
 	drawService       DrawService
 	preferenceService PreferenceService
+	balanceService    BalanceService
 
 	pendingArtistMu sync.Mutex
 	pendingArtist   bool
@@ -65,6 +71,10 @@ func (b *Bot) SetDrawService(service DrawService) {
 
 func (b *Bot) SetPreferenceService(service PreferenceService) {
 	b.preferenceService = service
+}
+
+func (b *Bot) SetBalanceService(service BalanceService) {
+	b.balanceService = service
 }
 
 func (b *Bot) Run(ctx context.Context) error {
@@ -142,6 +152,10 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	case "/img":
 		b.clearPendingArtist()
 		b.sendImageMenu(ctx, message.Chat.ID, 0, "")
+		return
+	case "/balance":
+		b.clearPendingArtist()
+		b.sendBalance(ctx, message.Chat.ID)
 		return
 	}
 
@@ -256,7 +270,7 @@ func (b *Bot) isPendingArtist() bool {
 }
 
 func buildStartText() string {
-	return "Grimoire v2\n\n发送任意文本即可开始绘图。\n发送 /img 可修改全局默认图像尺寸和画师串。"
+	return "Grimoire v2\n\n发送任意文本即可开始绘图。\n发送 /img 可修改全局默认图像尺寸和画师串。\n发送 /balance 可查询 NAI 余额。"
 }
 
 func buildImageMenuText(notice string, pref domainpreferences.Preference) string {
@@ -300,4 +314,34 @@ func firstWord(text string) string {
 		return ""
 	}
 	return parts[0]
+}
+
+func (b *Bot) sendBalance(ctx context.Context, chatID int64) {
+	if b.balanceService == nil {
+		_, _ = b.sendMessage(ctx, chatID, "余额服务未初始化", nil, 0)
+		return
+	}
+
+	balance, err := b.balanceService.GetBalance(ctx)
+	if err != nil {
+		_, _ = b.sendMessage(ctx, chatID, fmt.Sprintf("查询余额失败: %v", err), nil, 0)
+		return
+	}
+
+	_, _ = b.sendMessage(ctx, chatID, buildBalanceText(balance), nil, 0)
+}
+
+func buildBalanceText(balance domainnai.AccountBalance) string {
+	subscriptionStatus := "未激活"
+	if balance.SubscriptionActive {
+		subscriptionStatus = fmt.Sprintf("已激活 (tier=%d)", balance.SubscriptionTier)
+	}
+
+	return fmt.Sprintf(
+		"NAI 余额\n购买余额: %d\n月度余额: %d\n试用剩余图片: %d\n订阅: %s",
+		balance.PurchasedTrainingSteps,
+		balance.FixedTrainingStepsLeft,
+		balance.TrialImagesLeft,
+		subscriptionStatus,
+	)
 }

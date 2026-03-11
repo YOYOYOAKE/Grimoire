@@ -14,6 +14,7 @@ import (
 
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
+	domainnai "grimoire/internal/domain/nai"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -239,6 +240,50 @@ func TestPollRejectsUnknownJobID(t *testing.T) {
 	}
 }
 
+func TestGetBalanceReadsUserData(t *testing.T) {
+	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
+		if req.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", req.Method)
+		}
+		if req.URL.String() != "https://image.novelai.net/user/data" {
+			t.Fatalf("unexpected url: %s", req.URL.String())
+		}
+		if got := req.Header.Get("Authorization"); got != "Bearer key" {
+			t.Fatalf("unexpected authorization header: %q", got)
+		}
+
+		return newJSONResponse(http.StatusOK, `{
+			"subscription":{
+				"tier":1,
+				"active":true,
+				"trainingStepsLeft":{
+					"fixedTrainingStepsLeft":23,
+					"purchasedTrainingSteps":456
+				}
+			},
+			"information":{
+				"trialImagesLeft":12
+			}
+		}`), nil
+	})
+
+	balance, err := client.GetBalance(context.Background())
+	if err != nil {
+		t.Fatalf("get balance: %v", err)
+	}
+
+	expected := domainnai.AccountBalance{
+		PurchasedTrainingSteps: 456,
+		FixedTrainingStepsLeft: 23,
+		TrialImagesLeft:        12,
+		SubscriptionTier:       1,
+		SubscriptionActive:     true,
+	}
+	if balance != expected {
+		t.Fatalf("unexpected balance: %#v", balance)
+	}
+}
+
 func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *Client {
 	t.Helper()
 
@@ -294,5 +339,13 @@ func newBinaryResponse(statusCode int, body []byte) *http.Response {
 		StatusCode: statusCode,
 		Header:     make(http.Header),
 		Body:       io.NopCloser(bytes.NewReader(body)),
+	}
+}
+
+func newJSONResponse(statusCode int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: statusCode,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
