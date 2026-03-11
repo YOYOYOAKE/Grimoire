@@ -18,6 +18,7 @@ import (
 )
 
 const apiBase = "https://api.telegram.org"
+const officialNAIImageBaseURL = "https://image.novelai.net"
 
 const (
 	cbShapeSquare    = "img:shape:square"
@@ -317,6 +318,10 @@ func firstWord(text string) string {
 }
 
 func (b *Bot) sendBalance(ctx context.Context, chatID int64) {
+	if !b.balanceEnabled() {
+		_, _ = b.sendMessage(ctx, chatID, "无法使用", nil, 0)
+		return
+	}
 	if b.balanceService == nil {
 		_, _ = b.sendMessage(ctx, chatID, "余额服务未初始化", nil, 0)
 		return
@@ -329,6 +334,10 @@ func (b *Bot) sendBalance(ctx context.Context, chatID int64) {
 	}
 
 	_, _ = b.sendMessage(ctx, chatID, buildBalanceText(balance), nil, 0)
+}
+
+func (b *Bot) balanceEnabled() bool {
+	return strings.TrimRight(strings.TrimSpace(b.cfg.NAI.BaseURL), "/") == officialNAIImageBaseURL
 }
 
 func buildBalanceText(balance domainnai.AccountBalance) string {

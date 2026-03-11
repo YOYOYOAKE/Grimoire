@@ -245,7 +245,7 @@ func TestGetBalanceReadsUserData(t *testing.T) {
 		if req.Method != http.MethodGet {
 			t.Fatalf("unexpected method: %s", req.Method)
 		}
-		if req.URL.String() != "https://image.novelai.net/user/data" {
+		if req.URL.String() != balanceURL {
 			t.Fatalf("unexpected url: %s", req.URL.String())
 		}
 		if got := req.Header.Get("Authorization"); got != "Bearer key" {

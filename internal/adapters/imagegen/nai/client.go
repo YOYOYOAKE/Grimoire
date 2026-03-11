@@ -24,6 +24,7 @@ const (
 	supportedModel = "nai-diffusion-4-5-full"
 	promptSuffix   = "location, very aesthetic, masterpiece, no text"
 	baseNegative   = "nsfw, lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page"
+	balanceURL     = "https://api.novelai.net/user/data"
 )
 
 type Client struct {
@@ -122,8 +123,7 @@ func (c *Client) GetBalance(ctx context.Context) (domainnai.AccountBalance, erro
 	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.NAI.TimeoutSec)*time.Second)
 	defer cancel()
 
-	endpoint := strings.TrimRight(c.cfg.NAI.BaseURL, "/") + "/user/data"
-	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, endpoint, nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, balanceURL, nil)
 	if err != nil {
 		return domainnai.AccountBalance{}, fmt.Errorf("create user data request: %w", err)
 	}
