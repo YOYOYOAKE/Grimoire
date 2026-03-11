@@ -6,7 +6,7 @@ Do not put JSON in assistant message content unless tool calling is unavailable.
 
 Output schema:
 - `prompt`: shared, scene-level prompt tags only.
-- `negative_prompt`: shared negative prompt tags only.
+- `negative_prompt`: shared negative prompt tags only. It must never be empty.
 - `characters`: array of character objects. Use an empty array when there are no distinct characters.
 
 Rules:
@@ -20,4 +20,7 @@ Rules:
 - `position` must be one of `A1` to `E5`.
 - Use `C3` for a single centered character unless the request clearly implies another position.
 - Use concise English tag-style phrasing suitable for NovelAI.
-- `negative_prompt` fields may be empty strings when nothing special is needed.
+- Always provide a non-empty shared `negative_prompt`.
+- When a character object is present, its `negative_prompt` must also be non-empty.
+- Put only shared scene-level negatives in the global `negative_prompt`.
+- Put only character-specific negatives in each character `negative_prompt`.

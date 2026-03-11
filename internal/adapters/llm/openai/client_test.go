@@ -19,14 +19,14 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 func TestParseTranslation(t *testing.T) {
-	translation, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"","characters":[]}`)
+	translation, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)
 	if err != nil {
 		t.Fatalf("parse translation: %v", err)
 	}
 	if translation.Prompt != "moonlit girl" {
 		t.Fatalf("unexpected prompt: %q", translation.Prompt)
 	}
-	if translation.NegativePrompt != "" {
+	if translation.NegativePrompt != "blurry, lowres" {
 		t.Fatalf("unexpected negative prompt: %q", translation.NegativePrompt)
 	}
 	if len(translation.Characters) != 0 {
@@ -35,7 +35,7 @@ func TestParseTranslation(t *testing.T) {
 }
 
 func TestParseTranslationRequiresCharacters(t *testing.T) {
-	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":""}`)
+	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"blurry"}`)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -61,11 +61,31 @@ func TestParseTranslationSupportsLegacyFieldNames(t *testing.T) {
 }
 
 func TestParseTranslationRejectsInvalidCharacterPosition(t *testing.T) {
-	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"","characters":[{"prompt":"girl","negative_prompt":"","position":"Z9"}]}`)
+	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[{"prompt":"girl","negative_prompt":"bad hands","position":"Z9"}]}`)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "invalid position") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseTranslationRejectsEmptyNegativePrompt(t *testing.T) {
+	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"","characters":[]}`)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "missing negative_prompt") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseTranslationRejectsEmptyCharacterNegativePrompt(t *testing.T) {
+	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[{"prompt":"girl","negative_prompt":"","position":"C3"}]}`)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "characters[0] missing negative_prompt") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -81,7 +101,7 @@ func TestTranslateSendsToolChoiceRequest(t *testing.T) {
 			t.Fatalf("unmarshal request body: %v", err)
 		}
 
-		return newHTTPResponse(http.StatusOK, completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"","characters":[]}`)), nil
+		return newHTTPResponse(http.StatusOK, completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)), nil
 	})
 
 	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
@@ -141,7 +161,7 @@ func TestTranslateSendsToolChoiceRequest(t *testing.T) {
 
 func TestTranslateParsesToolCallResponse(t *testing.T) {
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
-		return newHTTPResponse(http.StatusOK, completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[{"prompt":"girl, long hair","negative_prompt":"","position":"C3"}]}`)), nil
+		return newHTTPResponse(http.StatusOK, completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[{"prompt":"girl, long hair","negative_prompt":"bad hands","position":"C3"}]}`)), nil
 	})
 
 	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
@@ -227,7 +247,7 @@ func TestTranslateParsesSSEToolCallChunks(t *testing.T) {
 
 func TestTranslateFallsBackToAssistantJSON(t *testing.T) {
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
-		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"","characters":[]}`)), nil
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)), nil
 	})
 
 	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
@@ -237,7 +257,7 @@ func TestTranslateFallsBackToAssistantJSON(t *testing.T) {
 	if translation.Prompt != "moonlit girl" {
 		t.Fatalf("unexpected prompt: %q", translation.Prompt)
 	}
-	if translation.NegativePrompt != "" {
+	if translation.NegativePrompt != "blurry, lowres" {
 		t.Fatalf("unexpected negative prompt: %q", translation.NegativePrompt)
 	}
 }
@@ -246,14 +266,17 @@ func TestTranslateLogsRequestAndTranslatedPrompts(t *testing.T) {
 	testCases := []struct {
 		name         string
 		responseBody string
+		expectParts  []string
 	}{
 		{
 			name:         "tool",
-			responseBody: completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"","characters":[]}`),
+			responseBody: completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[{"prompt":"girl, long hair","negative_prompt":"bad hands","position":"C3"}]}`),
+			expectParts:  []string{"negative_prompt=\"blurry, lowres\"", "characters=", "girl, long hair", "bad hands", "C3"},
 		},
 		{
 			name:         "plaintext",
-			responseBody: completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"","characters":[]}`),
+			responseBody: completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`),
+			expectParts:  []string{"negative_prompt=\"blurry, lowres\"", "characters=[]"},
 		},
 	}
 
@@ -288,8 +311,13 @@ func TestTranslateLogsRequestAndTranslatedPrompts(t *testing.T) {
 			if !strings.Contains(logOutput, "prompt=\"moonlit girl\"") {
 				t.Fatalf("expected prompt in success log, got %s", logOutput)
 			}
-			if !strings.Contains(logOutput, "negative_prompt=\"\"") {
+			if !strings.Contains(logOutput, "negative_prompt=\"blurry, lowres\"") {
 				t.Fatalf("expected negative prompt in success log, got %s", logOutput)
+			}
+			for _, expected := range tc.expectParts {
+				if !strings.Contains(logOutput, expected) {
+					t.Fatalf("expected %q in success log, got %s", expected, logOutput)
+				}
 			}
 			if strings.Contains(logOutput, "response_mode=") {
 				t.Fatalf("did not expect response_mode in success log, got %s", logOutput)

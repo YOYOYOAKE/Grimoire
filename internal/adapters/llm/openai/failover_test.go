@@ -237,6 +237,9 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 	if !strings.Contains(logOutput, "negative_prompt=neg") {
 		t.Fatalf("expected negative prompt in success log, got %s", logOutput)
 	}
+	if !strings.Contains(logOutput, "characters=[]") {
+		t.Fatalf("expected empty characters in success log, got %s", logOutput)
+	}
 	if strings.Contains(logOutput, "response_mode=") {
 		t.Fatalf("did not expect response_mode in success log, got %s", logOutput)
 	}

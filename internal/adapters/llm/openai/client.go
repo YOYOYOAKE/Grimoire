@@ -213,22 +213,25 @@ func translatePromptTool() map[string]any {
 						"type":        "string",
 						"description": "Shared scene-level English prompt tags only. Do not include character-specific tags here.",
 					},
-					"negative_prompt": map[string]string{
+					"negative_prompt": map[string]any{
 						"type":        "string",
-						"description": "Shared scene-level English negative prompt tags. Use an empty string if none.",
+						"minLength":   1,
+						"description": "Shared scene-level English negative prompt tags. It must be non-empty.",
 					},
 					"characters": map[string]any{
 						"type": "array",
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
-								"prompt": map[string]string{
+								"prompt": map[string]any{
 									"type":        "string",
+									"minLength":   1,
 									"description": "Character-specific English prompt tags only.",
 								},
-								"negative_prompt": map[string]string{
+								"negative_prompt": map[string]any{
 									"type":        "string",
-									"description": "Character-specific English negative prompt tags. Use an empty string if none.",
+									"minLength":   1,
+									"description": "Character-specific English negative prompt tags. It must be non-empty.",
 								},
 								"position": map[string]any{
 									"type":        "string",
@@ -297,6 +300,9 @@ func parseTranslation(raw string) (domaindraw.Translation, error) {
 	if translation.Prompt == "" {
 		return domaindraw.Translation{}, fmt.Errorf("llm response missing prompt")
 	}
+	if translation.NegativePrompt == "" {
+		return domaindraw.Translation{}, fmt.Errorf("llm response missing negative_prompt")
+	}
 	return translation, nil
 }
 
@@ -360,10 +366,14 @@ func parseCharacters(raw json.RawMessage) ([]domaindraw.CharacterPrompt, error) 
 		if prompt == "" {
 			return nil, fmt.Errorf("llm response characters[%d] missing prompt", i)
 		}
+		negativePrompt = strings.TrimSpace(negativePrompt)
+		if negativePrompt == "" {
+			return nil, fmt.Errorf("llm response characters[%d] missing negative_prompt", i)
+		}
 
 		characters = append(characters, domaindraw.CharacterPrompt{
 			Prompt:         prompt,
-			NegativePrompt: strings.TrimSpace(negativePrompt),
+			NegativePrompt: negativePrompt,
 			Position:       position,
 		})
 	}
@@ -701,7 +711,29 @@ func logTranslateSuccess(logger *slog.Logger, translation domaindraw.Translation
 		"llm translated",
 		"prompt", translation.Prompt,
 		"negative_prompt", translation.NegativePrompt,
+		"characters", formatCharactersForLog(translation.Characters),
 	)
+}
+
+func formatCharactersForLog(characters []domaindraw.CharacterPrompt) string {
+	if len(characters) == 0 {
+		return "[]"
+	}
+
+	logCharacters := make([]map[string]string, 0, len(characters))
+	for _, character := range characters {
+		logCharacters = append(logCharacters, map[string]string{
+			"prompt":          character.Prompt,
+			"negative_prompt": character.NegativePrompt,
+			"position":        character.Position,
+		})
+	}
+
+	data, err := json.Marshal(logCharacters)
+	if err != nil {
+		return "[]"
+	}
+	return string(data)
 }
 
 func logTranslateAttemptFailure(logger *slog.Logger, shape domaindraw.Shape, llmIndex int, model string, baseURL string, attempt int, err error) {
