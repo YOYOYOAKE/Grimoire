@@ -205,20 +205,43 @@ func translatePromptTool() map[string]any {
 		"type": "function",
 		"function": map[string]any{
 			"name":        translatePromptToolName,
-			"description": "Return the positivePrompt and negativePrompt fields for image generation.",
+			"description": "Return NovelAI V4.5 prompt data using the prompt, negative_prompt, and characters fields.",
 			"parameters": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"positivePrompt": map[string]string{
+					"prompt": map[string]string{
 						"type":        "string",
-						"description": "NovelAI-friendly English positive prompt tags.",
+						"description": "Shared scene-level English prompt tags only. Do not include character-specific tags here.",
 					},
-					"negativePrompt": map[string]string{
+					"negative_prompt": map[string]string{
 						"type":        "string",
-						"description": "NovelAI-friendly English negative prompt tags. Use an empty string if none.",
+						"description": "Shared scene-level English negative prompt tags. Use an empty string if none.",
+					},
+					"characters": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"prompt": map[string]string{
+									"type":        "string",
+									"description": "Character-specific English prompt tags only.",
+								},
+								"negative_prompt": map[string]string{
+									"type":        "string",
+									"description": "Character-specific English negative prompt tags. Use an empty string if none.",
+								},
+								"position": map[string]any{
+									"type":        "string",
+									"description": "Character position on a 5x5 grid.",
+									"enum":        []string{"A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4", "D5", "E1", "E2", "E3", "E4", "E5"},
+								},
+							},
+							"required":             []string{"prompt", "negative_prompt", "position"},
+							"additionalProperties": false,
+						},
 					},
 				},
-				"required":             []string{"positivePrompt", "negativePrompt"},
+				"required":             []string{"prompt", "negative_prompt", "characters"},
 				"additionalProperties": false,
 			},
 		},
@@ -237,32 +260,129 @@ func parseTranslation(raw string) (domaindraw.Translation, error) {
 		return domaindraw.Translation{}, fmt.Errorf("parse llm json: %w", err)
 	}
 
-	positiveRaw, ok := parsed["positivePrompt"]
+	promptRaw, usedLegacyPrompt, ok := translationField(parsed, "prompt", "positivePrompt")
 	if !ok {
-		return domaindraw.Translation{}, fmt.Errorf("llm response missing positivePrompt")
+		return domaindraw.Translation{}, fmt.Errorf("llm response missing prompt")
 	}
-	negativeRaw, ok := parsed["negativePrompt"]
+	negativeRaw, usedLegacyNegative, ok := translationField(parsed, "negative_prompt", "negativePrompt")
 	if !ok {
-		return domaindraw.Translation{}, fmt.Errorf("llm response missing negativePrompt")
+		return domaindraw.Translation{}, fmt.Errorf("llm response missing negative_prompt")
 	}
 
-	var positivePrompt string
-	if err := json.Unmarshal(positiveRaw, &positivePrompt); err != nil {
-		return domaindraw.Translation{}, fmt.Errorf("llm response positivePrompt must be string: %w", err)
+	prompt, err := parseTranslationStringField(promptRaw, "prompt")
+	if err != nil {
+		return domaindraw.Translation{}, err
 	}
-	var negativePrompt string
-	if err := json.Unmarshal(negativeRaw, &negativePrompt); err != nil {
-		return domaindraw.Translation{}, fmt.Errorf("llm response negativePrompt must be string: %w", err)
+	negativePrompt, err := parseTranslationStringField(negativeRaw, "negative_prompt")
+	if err != nil {
+		return domaindraw.Translation{}, err
+	}
+
+	charactersRaw, ok := parsed["characters"]
+	characters := []domaindraw.CharacterPrompt{}
+	if ok {
+		characters, err = parseCharacters(charactersRaw)
+		if err != nil {
+			return domaindraw.Translation{}, err
+		}
+	} else if !usedLegacyPrompt && !usedLegacyNegative {
+		return domaindraw.Translation{}, fmt.Errorf("llm response missing characters")
 	}
 
 	translation := domaindraw.Translation{
-		PositivePrompt: strings.TrimSpace(positivePrompt),
+		Prompt:         strings.TrimSpace(prompt),
 		NegativePrompt: strings.TrimSpace(negativePrompt),
+		Characters:     characters,
 	}
-	if translation.PositivePrompt == "" {
-		return domaindraw.Translation{}, fmt.Errorf("llm response missing positivePrompt")
+	if translation.Prompt == "" {
+		return domaindraw.Translation{}, fmt.Errorf("llm response missing prompt")
 	}
 	return translation, nil
+}
+
+func translationField(parsed map[string]json.RawMessage, preferred string, legacy string) (json.RawMessage, bool, bool) {
+	if raw, ok := parsed[preferred]; ok {
+		return raw, false, true
+	}
+	if raw, ok := parsed[legacy]; ok {
+		return raw, true, true
+	}
+	return nil, false, false
+}
+
+func parseTranslationStringField(raw json.RawMessage, field string) (string, error) {
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", fmt.Errorf("llm response %s must be string: %w", field, err)
+	}
+	return value, nil
+}
+
+func parseCharacters(raw json.RawMessage) ([]domaindraw.CharacterPrompt, error) {
+	var parsed []map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("llm response characters must be array: %w", err)
+	}
+
+	characters := make([]domaindraw.CharacterPrompt, 0, len(parsed))
+	for i, item := range parsed {
+		promptRaw, ok := item["prompt"]
+		if !ok {
+			return nil, fmt.Errorf("llm response characters[%d] missing prompt", i)
+		}
+		negativeRaw, ok := item["negative_prompt"]
+		if !ok {
+			return nil, fmt.Errorf("llm response characters[%d] missing negative_prompt", i)
+		}
+		positionRaw, ok := item["position"]
+		if !ok {
+			return nil, fmt.Errorf("llm response characters[%d] missing position", i)
+		}
+
+		prompt, err := parseTranslationStringField(promptRaw, fmt.Sprintf("characters[%d].prompt", i))
+		if err != nil {
+			return nil, err
+		}
+		negativePrompt, err := parseTranslationStringField(negativeRaw, fmt.Sprintf("characters[%d].negative_prompt", i))
+		if err != nil {
+			return nil, err
+		}
+		position, err := parseTranslationStringField(positionRaw, fmt.Sprintf("characters[%d].position", i))
+		if err != nil {
+			return nil, err
+		}
+		position, err = normalizeCharacterPosition(position)
+		if err != nil {
+			return nil, fmt.Errorf("llm response characters[%d] invalid position: %w", i, err)
+		}
+
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
+			return nil, fmt.Errorf("llm response characters[%d] missing prompt", i)
+		}
+
+		characters = append(characters, domaindraw.CharacterPrompt{
+			Prompt:         prompt,
+			NegativePrompt: strings.TrimSpace(negativePrompt),
+			Position:       position,
+		})
+	}
+
+	return characters, nil
+}
+
+func normalizeCharacterPosition(raw string) (string, error) {
+	position := strings.ToUpper(strings.TrimSpace(raw))
+	if len(position) != 2 {
+		return "", fmt.Errorf("position must be one of A1-E5")
+	}
+
+	column := position[0]
+	row := position[1]
+	if column < 'A' || column > 'E' || row < '1' || row > '5' {
+		return "", fmt.Errorf("position must be one of A1-E5")
+	}
+	return position, nil
 }
 
 func extractAssistantContent(respBody []byte) (string, string, error) {
@@ -579,7 +699,7 @@ func logTranslateSuccess(logger *slog.Logger, translation domaindraw.Translation
 
 	logger.Info(
 		"llm translated",
-		"positive_prompt", translation.PositivePrompt,
+		"prompt", translation.Prompt,
 		"negative_prompt", translation.NegativePrompt,
 	)
 }

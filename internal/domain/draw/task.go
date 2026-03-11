@@ -40,10 +40,10 @@ type Task struct {
 	RequestMessageID int64
 	StatusMessageID  int64
 	Status           Status
-	Prompt           string
+	RequestText      string
 	Shape            Shape
 	Artist           string
-	PositivePrompt   string
+	Prompt           string
 	NegativePrompt   string
 	ProviderJobID    string
 	ErrorText        string
@@ -52,14 +52,22 @@ type Task struct {
 	CompletedAt      time.Time
 }
 
-type Translation struct {
-	PositivePrompt string
+type CharacterPrompt struct {
+	Prompt         string
 	NegativePrompt string
+	Position       string
+}
+
+type Translation struct {
+	Prompt         string
+	NegativePrompt string
+	Characters     []CharacterPrompt
 }
 
 type GenerateRequest struct {
-	PositivePrompt string
+	Prompt         string
 	NegativePrompt string
+	Characters     []CharacterPrompt
 	Shape          Shape
 	Artists        string
 }
@@ -71,9 +79,9 @@ type JobUpdate struct {
 	Error         string
 }
 
-func NewTask(id string, chatID, requestMessageID int64, prompt string, shape Shape, artist string, now time.Time) (Task, error) {
+func NewTask(id string, chatID, requestMessageID int64, requestText string, shape Shape, artist string, now time.Time) (Task, error) {
 	id = strings.TrimSpace(id)
-	prompt = strings.TrimSpace(prompt)
+	requestText = strings.TrimSpace(requestText)
 	artist = strings.TrimSpace(artist)
 	if id == "" {
 		return Task{}, fmt.Errorf("task id is required")
@@ -81,8 +89,8 @@ func NewTask(id string, chatID, requestMessageID int64, prompt string, shape Sha
 	if chatID == 0 {
 		return Task{}, fmt.Errorf("chat id is required")
 	}
-	if prompt == "" {
-		return Task{}, fmt.Errorf("prompt is required")
+	if requestText == "" {
+		return Task{}, fmt.Errorf("request text is required")
 	}
 	if !shape.Valid() {
 		return Task{}, fmt.Errorf("invalid shape %q", shape)
@@ -95,7 +103,7 @@ func NewTask(id string, chatID, requestMessageID int64, prompt string, shape Sha
 		ID:               id,
 		ChatID:           chatID,
 		RequestMessageID: requestMessageID,
-		Prompt:           prompt,
+		RequestText:      requestText,
 		Shape:            shape,
 		Artist:           artist,
 		CreatedAt:        now,
@@ -124,8 +132,8 @@ func (t *Task) MarkTranslating(now time.Time) error {
 	return nil
 }
 
-func (t *Task) SetTranslation(positive string, negative string) {
-	t.PositivePrompt = strings.TrimSpace(positive)
+func (t *Task) SetTranslation(prompt string, negative string) {
+	t.Prompt = strings.TrimSpace(prompt)
 	t.NegativePrompt = strings.TrimSpace(negative)
 }
 

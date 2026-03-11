@@ -102,7 +102,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		"task queueing",
 		"task_id", task.ID,
 		"chat_id", task.ChatID,
-		"prompt", task.Prompt,
+		"prompt", task.RequestText,
 		"shape", task.Shape,
 		"artists", task.Artist,
 	)
@@ -138,11 +138,11 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		return err
 	}
 
-	translation, err := s.translator.Translate(ctx, task.Prompt, task.Shape)
+	translation, err := s.translator.Translate(ctx, task.RequestText, task.Shape)
 	if err != nil {
 		return s.failTask(ctx, &task, fmt.Sprintf("LLM 翻译失败: %v", err))
 	}
-	task.SetTranslation(mergeArtist(task.Artist, translation.PositivePrompt), translation.NegativePrompt)
+	task.SetTranslation(mergeArtist(task.Artist, translation.Prompt), translation.NegativePrompt)
 
 	if err := task.MarkSubmitting(s.now()); err != nil {
 		return err
@@ -152,8 +152,9 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	}
 
 	jobID, err := s.generator.Submit(ctx, domaindraw.GenerateRequest{
-		PositivePrompt: task.PositivePrompt,
+		Prompt:         task.Prompt,
 		NegativePrompt: task.NegativePrompt,
+		Characters:     translation.Characters,
 		Shape:          task.Shape,
 		Artists:        task.Artist,
 	})
@@ -297,15 +298,15 @@ func (s *Service) deleteStatusMessage(ctx context.Context, task domaindraw.Task)
 	}
 }
 
-func mergeArtist(artist string, positivePrompt string) string {
+func mergeArtist(artist string, prompt string) string {
 	artist = strings.TrimSpace(artist)
-	positivePrompt = strings.TrimSpace(positivePrompt)
+	prompt = strings.TrimSpace(prompt)
 	switch {
 	case artist == "":
-		return positivePrompt
-	case positivePrompt == "":
+		return prompt
+	case prompt == "":
 		return artist
 	default:
-		return artist + ", " + positivePrompt
+		return artist + ", " + prompt
 	}
 }

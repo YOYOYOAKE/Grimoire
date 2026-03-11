@@ -35,7 +35,7 @@ func TestSubmitLogsRequestMetadata(t *testing.T) {
 	})
 
 	jobID, err := client.Submit(context.Background(), draw.GenerateRequest{
-		PositivePrompt: "pos",
+		Prompt:         "pos",
 		NegativePrompt: "neg",
 		Shape:          draw.ShapeSquare,
 		Artists:        "artist:foo",
@@ -51,7 +51,7 @@ func TestSubmitLogsRequestMetadata(t *testing.T) {
 	for _, expected := range []string{
 		"nai request started",
 		"base_url=https://image.idlecloud.cc/api",
-		"model=nai",
+		"model=nai-diffusion-4-5-full",
 		"attempt=1",
 		"shape=square",
 		"artists=artist:foo",
@@ -79,7 +79,7 @@ func TestSubmitRetriesUntilSuccess(t *testing.T) {
 	}
 
 	jobID, err := client.Submit(context.Background(), draw.GenerateRequest{
-		PositivePrompt: "pos",
+		Prompt:         "pos",
 		NegativePrompt: "neg",
 		Shape:          draw.ShapePortrait,
 		Artists:        "artist:bar",
@@ -123,7 +123,7 @@ func TestSubmitReturnsErrorAfterThreeFailures(t *testing.T) {
 	}
 
 	_, err := client.Submit(context.Background(), draw.GenerateRequest{
-		PositivePrompt: "pos",
+		Prompt:         "pos",
 		NegativePrompt: "neg",
 		Shape:          draw.ShapeSquare,
 		Artists:        "artist:foo",
@@ -150,7 +150,7 @@ func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *
 			NAI: config.NAI{
 				BaseURL:    "https://image.idlecloud.cc/api",
 				APIKey:     "key",
-				Model:      "nai",
+				Model:      "nai-diffusion-4-5-full",
 				TimeoutSec: 10,
 			},
 		},

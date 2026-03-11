@@ -7,7 +7,7 @@ import (
 	"os"
 	"time"
 
-	xianyun "grimoire/internal/adapters/imagegen/xianyun"
+	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
 	memoryqueue "grimoire/internal/adapters/queue/memory"
 	memoryrepo "grimoire/internal/adapters/repository/memory"
@@ -35,11 +35,15 @@ func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 
 	telegramBot := telegram.NewBot(cfg, logger)
 	preferenceService := preferencesapp.NewService(preferenceRepo)
+	imageGenerator, err := nai.NewClient(cfg, logger)
+	if err != nil {
+		return nil, fmt.Errorf("init official nai client: %w", err)
+	}
 	drawService := drawapp.NewService(
 		taskRepo,
 		preferenceRepo,
 		openai.NewFailoverClient(cfg.LLMs, logger),
-		xianyun.NewClient(cfg, logger),
+		imageGenerator,
 		telegramBot,
 		func() time.Time { return time.Now() },
 		func() string { return memoryrepo.NewTaskID() },

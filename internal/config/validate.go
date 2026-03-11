@@ -24,7 +24,13 @@ func validate(cfg Config) error {
 			return err
 		}
 	}
-	return validateProvider("nai", cfg.NAI.BaseURL, cfg.NAI.APIKey, cfg.NAI.Model, cfg.NAI.Proxy)
+	if err := validateProvider("nai", cfg.NAI.BaseURL, cfg.NAI.APIKey, cfg.NAI.Model, cfg.NAI.Proxy); err != nil {
+		return err
+	}
+	if cfg.NAI.Model != "nai-diffusion-4-5-full" {
+		return fmt.Errorf("nai.model must be nai-diffusion-4-5-full")
+	}
+	return nil
 }
 
 func validateRequiredString(name string, value string) error {

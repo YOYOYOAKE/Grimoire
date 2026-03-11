@@ -51,7 +51,7 @@ func TestFailoverClientReturnsFirstSuccessWithoutFallback(t *testing.T) {
 		results: []stubResult{
 			{
 				result: translationResult{
-					Translation:  domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"},
+					Translation:  domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"},
 					ResponseMode: llmResponseModeTool,
 				},
 			},
@@ -70,8 +70,8 @@ func TestFailoverClientReturnsFirstSuccessWithoutFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
-	if translation.PositivePrompt != "pos" {
-		t.Fatalf("unexpected positive prompt: %q", translation.PositivePrompt)
+	if translation.Prompt != "pos" {
+		t.Fatalf("unexpected prompt: %q", translation.Prompt)
 	}
 	if first.callCount != 1 {
 		t.Fatalf("expected first client call count 1, got %d", first.callCount)
@@ -97,7 +97,7 @@ func TestFailoverClientRetriesThenFallsBack(t *testing.T) {
 		results: []stubResult{
 			{
 				result: translationResult{
-					Translation:  domaindraw.Translation{PositivePrompt: "pos-2", NegativePrompt: "neg-2"},
+					Translation:  domaindraw.Translation{Prompt: "pos-2", NegativePrompt: "neg-2"},
 					ResponseMode: llmResponseModePlaintext,
 				},
 			},
@@ -109,8 +109,8 @@ func TestFailoverClientRetriesThenFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatalf("translate: %v", err)
 	}
-	if translation.PositivePrompt != "pos-2" {
-		t.Fatalf("unexpected positive prompt: %q", translation.PositivePrompt)
+	if translation.Prompt != "pos-2" {
+		t.Fatalf("unexpected prompt: %q", translation.Prompt)
 	}
 	if first.callCount != attemptsPerLLM {
 		t.Fatalf("expected first client retries %d, got %d", attemptsPerLLM, first.callCount)
@@ -195,7 +195,7 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 		results: []stubResult{
 			{
 				result: translationResult{
-					Translation:  domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"},
+					Translation:  domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"},
 					ResponseMode: llmResponseModeTool,
 				},
 			},
@@ -231,8 +231,8 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 	if !strings.Contains(logOutput, "attempt=1") {
 		t.Fatalf("expected attempt in logs, got %s", logOutput)
 	}
-	if !strings.Contains(logOutput, "positive_prompt=pos") {
-		t.Fatalf("expected positive prompt in success log, got %s", logOutput)
+	if !strings.Contains(logOutput, "prompt=pos") {
+		t.Fatalf("expected prompt in success log, got %s", logOutput)
 	}
 	if !strings.Contains(logOutput, "negative_prompt=neg") {
 		t.Fatalf("expected negative prompt in success log, got %s", logOutput)

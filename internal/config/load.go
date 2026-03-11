@@ -113,7 +113,7 @@ llms:
     timeout_sec: 180
 
 nai:
-  base_url: "https://image.idlecloud.cc/api"
+  base_url: "https://image.novelai.net"
   api_key: ""
   model: "nai-diffusion-4-5-full"
   proxy: ""

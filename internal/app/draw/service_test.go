@@ -168,7 +168,7 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 	service := NewService(
 		taskRepo,
 		preferences,
-		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
 		generator,
 		notifier,
 		func() time.Time { return time.Unix(100, 0) },
@@ -208,6 +208,12 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 	if generator.lastRequest.Artists != "artist:foo" {
 		t.Fatalf("expected artists forwarded to generator, got %q", generator.lastRequest.Artists)
 	}
+	if generator.lastRequest.Prompt != "artist:foo, pos" {
+		t.Fatalf("expected merged prompt forwarded to generator, got %q", generator.lastRequest.Prompt)
+	}
+	if generator.lastRequest.NegativePrompt != "neg" {
+		t.Fatalf("expected negative prompt forwarded to generator, got %q", generator.lastRequest.NegativePrompt)
+	}
 }
 
 func TestProcessFailureDeletesTask(t *testing.T) {
@@ -245,7 +251,7 @@ func TestProcessSendPhotoFailureDeletesTask(t *testing.T) {
 	service := NewService(
 		taskRepo,
 		&preferenceRepoStub{},
-		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
 		&generatorStub{
 			jobID: "job-1",
 			updates: []domaindraw.JobUpdate{
@@ -283,7 +289,7 @@ func TestProcessSendsPhotoWhenStatusMessageMissing(t *testing.T) {
 	service := NewService(
 		taskRepo,
 		&preferenceRepoStub{},
-		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
 		&generatorStub{
 			jobID: "job-1",
 			updates: []domaindraw.JobUpdate{
@@ -327,7 +333,7 @@ func TestProcessDoesNotSendReplacementStatusMessageOnEditFailure(t *testing.T) {
 	service := NewService(
 		taskRepo,
 		&preferenceRepoStub{},
-		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
 		&generatorStub{
 			jobID: "job-1",
 			updates: []domaindraw.JobUpdate{
@@ -428,7 +434,13 @@ func TestSubmitAndProcessLogTaskLifecycle(t *testing.T) {
 	service := NewService(
 		taskRepo,
 		preferences,
-		&translatorStub{result: domaindraw.Translation{PositivePrompt: "pos", NegativePrompt: "neg"}},
+		&translatorStub{result: domaindraw.Translation{
+			Prompt:         "pos",
+			NegativePrompt: "neg",
+			Characters: []domaindraw.CharacterPrompt{
+				{Prompt: "girl", NegativePrompt: "bad hands", Position: "C3"},
+			},
+		}},
 		generator,
 		notifier,
 		time.Now,
@@ -467,5 +479,8 @@ func TestSubmitAndProcessLogTaskLifecycle(t *testing.T) {
 		if !strings.Contains(logOutput, expected) {
 			t.Fatalf("expected %q in log output, got %s", expected, logOutput)
 		}
+	}
+	if len(generator.lastRequest.Characters) != 1 || generator.lastRequest.Characters[0].Position != "C3" {
+		t.Fatalf("expected characters forwarded to generator, got %#v", generator.lastRequest.Characters)
 	}
 }

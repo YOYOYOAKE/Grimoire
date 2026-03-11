@@ -46,7 +46,7 @@ func (c *Client) Submit(ctx context.Context, req domaindraw.GenerateRequest) (st
 
 	payload := map[string]any{
 		"model":                          c.cfg.NAI.Model,
-		"positivePrompt":                 req.PositivePrompt,
+		"positivePrompt":                 req.Prompt,
 		"negativePrompt":                 req.NegativePrompt,
 		"qualityToggle":                  false,
 		"scale":                          5,
