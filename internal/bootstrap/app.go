@@ -20,9 +20,10 @@ import (
 const workerConcurrency = 1 // NAI rejects concurrent jobs, so draw tasks must be processed serially.
 
 type App struct {
-	bot    *telegram.Bot
-	worker *memoryqueue.Worker
-	logger *slog.Logger
+	bot         *telegram.Bot
+	worker      *memoryqueue.Worker
+	logger      *slog.Logger
+	adminChatID int64
 }
 
 func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
@@ -61,15 +62,19 @@ func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 	telegramBot.SetBalanceService(imageGenerator)
 
 	return &App{
-		bot:    telegramBot,
-		worker: worker,
-		logger: logger,
+		bot:         telegramBot,
+		worker:      worker,
+		logger:      logger,
+		adminChatID: cfg.Telegram.AdminUserID,
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
 	a.worker.Start(ctx)
 	a.logger.Info("grimoire v2 started")
+	if _, err := a.bot.SendText(ctx, a.adminChatID, 0, "Grimoire v2 已启动"); err != nil && a.logger != nil {
+		a.logger.Warn("send startup notification failed", "chat_id", a.adminChatID, "error", err)
+	}
 	defer a.logger.Info("grimoire v2 stopped")
 	return a.bot.Run(ctx)
 }
