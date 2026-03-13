@@ -22,10 +22,9 @@ type LLM struct {
 }
 
 type NAI struct {
-	BaseURL         string `yaml:"base_url"`
-	APIKey          string `yaml:"api_key"`
-	Model           string `yaml:"model"`
-	Proxy           string `yaml:"proxy"`
-	TimeoutSec      int    `yaml:"timeout_sec"`
-	PollIntervalSec int    `yaml:"poll_interval_sec"`
+	BaseURL    string `yaml:"base_url"`
+	APIKey     string `yaml:"api_key"`
+	Model      string `yaml:"model"`
+	Proxy      string `yaml:"proxy"`
+	TimeoutSec int    `yaml:"timeout_sec"`
 }

@@ -78,30 +78,19 @@ func (s *translatorStub) Translate(_ context.Context, _ string, _ domaindraw.Sha
 }
 
 type generatorStub struct {
-	jobID       string
-	updates     []domaindraw.JobUpdate
-	submit      error
-	poll        error
-	submitCalls int
+	image       []byte
+	err         error
+	generateCnt int
 	lastRequest domaindraw.GenerateRequest
 }
 
-func (s *generatorStub) Submit(_ context.Context, req domaindraw.GenerateRequest) (string, error) {
-	s.submitCalls++
+func (s *generatorStub) Generate(_ context.Context, req domaindraw.GenerateRequest) ([]byte, error) {
+	s.generateCnt++
 	s.lastRequest = req
-	return s.jobID, s.submit
-}
-
-func (s *generatorStub) Poll(_ context.Context, _ string) (domaindraw.JobUpdate, error) {
-	if s.poll != nil {
-		return domaindraw.JobUpdate{}, s.poll
+	if s.err != nil {
+		return nil, s.err
 	}
-	if len(s.updates) == 0 {
-		return domaindraw.JobUpdate{}, errors.New("missing update")
-	}
-	update := s.updates[0]
-	s.updates = s.updates[1:]
-	return update, nil
+	return append([]byte(nil), s.image...), nil
 }
 
 type notifierStub struct {
@@ -149,7 +138,7 @@ func (s *notifierStub) DeleteMessage(_ context.Context, _ int64, messageID int64
 	return nil
 }
 
-func TestProcessSuccessDeletesTask(t *testing.T) {
+func TestSubmitSnapshotsArtistsAndProcessUsesSnapshot(t *testing.T) {
 	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
 	preferences := &preferenceRepoStub{
 		preference: domainpreferences.Preference{
@@ -158,13 +147,7 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 		},
 	}
 	notifier := &notifierStub{}
-	generator := &generatorStub{
-		jobID: "job-1",
-		updates: []domaindraw.JobUpdate{
-			{Status: domaindraw.JobQueued, QueuePosition: 1},
-			{Status: domaindraw.JobCompleted, Image: []byte("png")},
-		},
-	}
+	generator := &generatorStub{image: []byte("png")}
 	service := NewService(
 		taskRepo,
 		preferences,
@@ -173,11 +156,9 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 		notifier,
 		func() time.Time { return time.Unix(100, 0) },
 		func() string { return "task-1" },
-		time.Millisecond,
 		nil,
 	)
-	scheduler := &schedulerStub{}
-	service.SetScheduler(scheduler)
+	service.SetScheduler(&schedulerStub{})
 
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID:           1,
@@ -187,36 +168,42 @@ func TestProcessSuccessDeletesTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
+	if task.Artists != "artist:foo" {
+		t.Fatalf("expected artists snapshot, got %q", task.Artists)
+	}
+
+	preferences.preference = domainpreferences.Preference{
+		Shape:   domaindraw.ShapePortrait,
+		Artists: "artist:bar",
+	}
+
 	if err := service.Process(context.Background(), task.ID); err != nil {
 		t.Fatalf("process: %v", err)
 	}
 	if _, ok := taskRepo.tasks[task.ID]; ok {
 		t.Fatal("expected task deleted")
 	}
-	if len(notifier.sentTexts) != 1 {
-		t.Fatalf("expected exactly 1 status text message, got %d", len(notifier.sentTexts))
+	if generator.lastRequest.Shape != domaindraw.ShapeSquare {
+		t.Fatalf("expected shape snapshot, got %s", generator.lastRequest.Shape)
+	}
+	if generator.lastRequest.Prompt != "artist:foo, pos" {
+		t.Fatalf("expected merged prompt to use submit-time artists, got %q", generator.lastRequest.Prompt)
+	}
+	if generator.lastRequest.NegativePrompt != "neg" {
+		t.Fatalf("expected negative prompt forwarded, got %q", generator.lastRequest.NegativePrompt)
 	}
 	if notifier.sendPhotos != 1 {
-		t.Fatalf("expected 1 sent photo, got %d", notifier.sendPhotos)
+		t.Fatalf("expected 1 photo, got %d", notifier.sendPhotos)
 	}
 	if len(notifier.sendReplyTo) != 1 || notifier.sendReplyTo[0] != 3 {
-		t.Fatalf("expected photo reply to request message 3, got %#v", notifier.sendReplyTo)
+		t.Fatalf("expected photo reply target 3, got %#v", notifier.sendReplyTo)
 	}
 	if len(notifier.deleted) != 1 || notifier.deleted[0] != 1 {
 		t.Fatalf("expected status message 1 deleted, got %#v", notifier.deleted)
 	}
-	if generator.lastRequest.Artists != "artist:foo" {
-		t.Fatalf("expected artists forwarded to generator, got %q", generator.lastRequest.Artists)
-	}
-	if generator.lastRequest.Prompt != "artist:foo, pos" {
-		t.Fatalf("expected merged prompt forwarded to generator, got %q", generator.lastRequest.Prompt)
-	}
-	if generator.lastRequest.NegativePrompt != "neg" {
-		t.Fatalf("expected negative prompt forwarded to generator, got %q", generator.lastRequest.NegativePrompt)
-	}
 }
 
-func TestProcessFailureDeletesTask(t *testing.T) {
+func TestProcessTranslatorFailureDeletesTask(t *testing.T) {
 	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
 	service := NewService(
 		taskRepo,
@@ -226,14 +213,11 @@ func TestProcessFailureDeletesTask(t *testing.T) {
 		&notifierStub{},
 		time.Now,
 		func() string { return "task-1" },
-		time.Millisecond,
 		nil,
 	)
 	service.SetScheduler(&schedulerStub{})
-	task, err := service.Submit(context.Background(), SubmitCommand{
-		ChatID: 1,
-		Prompt: "moon",
-	})
+
+	task, err := service.Submit(context.Background(), SubmitCommand{ChatID: 1, Prompt: "moon"})
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -242,6 +226,72 @@ func TestProcessFailureDeletesTask(t *testing.T) {
 	}
 	if _, ok := taskRepo.tasks[task.ID]; ok {
 		t.Fatal("expected task deleted")
+	}
+}
+
+func TestProcessGenerateFailureDeletesTask(t *testing.T) {
+	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
+	generator := &generatorStub{err: errors.New("generate failed")}
+	service := NewService(
+		taskRepo,
+		&preferenceRepoStub{},
+		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
+		generator,
+		&notifierStub{},
+		time.Now,
+		func() string { return "task-1" },
+		nil,
+	)
+	service.SetScheduler(&schedulerStub{})
+
+	task, err := service.Submit(context.Background(), SubmitCommand{ChatID: 1, Prompt: "moon"})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := service.Process(context.Background(), task.ID); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	if _, ok := taskRepo.tasks[task.ID]; ok {
+		t.Fatal("expected task deleted")
+	}
+	if generator.generateCnt != 1 {
+		t.Fatalf("expected one generate call, got %d", generator.generateCnt)
+	}
+}
+
+func TestProcessGenerateFailureLogsTaskFailure(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+	taskRepo := &taskRepoStub{tasks: map[string]domaindraw.Task{}}
+	service := NewService(
+		taskRepo,
+		&preferenceRepoStub{},
+		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
+		&generatorStub{err: errors.New("EOF")},
+		&notifierStub{},
+		time.Now,
+		func() string { return "task-1" },
+		slog.New(slog.NewTextHandler(logBuffer, nil)),
+	)
+	service.SetScheduler(&schedulerStub{})
+
+	task, err := service.Submit(context.Background(), SubmitCommand{ChatID: 1, Prompt: "moon"})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if err := service.Process(context.Background(), task.ID); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"task failed",
+		"task_id=task-1",
+		"chat_id=1",
+		"reason=\"生成图像失败: EOF\"",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in log output, got %s", expected, logOutput)
+		}
 	}
 }
 
@@ -252,23 +302,15 @@ func TestProcessSendPhotoFailureDeletesTask(t *testing.T) {
 		taskRepo,
 		&preferenceRepoStub{},
 		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
-		&generatorStub{
-			jobID: "job-1",
-			updates: []domaindraw.JobUpdate{
-				{Status: domaindraw.JobCompleted, Image: []byte("png")},
-			},
-		},
+		&generatorStub{image: []byte("png")},
 		notifier,
 		time.Now,
 		func() string { return "task-1" },
-		time.Millisecond,
 		nil,
 	)
 	service.SetScheduler(&schedulerStub{})
-	task, err := service.Submit(context.Background(), SubmitCommand{
-		ChatID: 1,
-		Prompt: "moon",
-	})
+
+	task, err := service.Submit(context.Background(), SubmitCommand{ChatID: 1, Prompt: "moon"})
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -290,23 +332,15 @@ func TestProcessSendsPhotoWhenStatusMessageMissing(t *testing.T) {
 		taskRepo,
 		&preferenceRepoStub{},
 		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
-		&generatorStub{
-			jobID: "job-1",
-			updates: []domaindraw.JobUpdate{
-				{Status: domaindraw.JobCompleted, Image: []byte("png")},
-			},
-		},
+		&generatorStub{image: []byte("png")},
 		notifier,
 		time.Now,
 		func() string { return "task-1" },
-		time.Millisecond,
 		nil,
 	)
 	service.SetScheduler(&schedulerStub{})
-	task, err := service.Submit(context.Background(), SubmitCommand{
-		ChatID: 1,
-		Prompt: "moon",
-	})
+
+	task, err := service.Submit(context.Background(), SubmitCommand{ChatID: 1, Prompt: "moon"})
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -317,7 +351,7 @@ func TestProcessSendsPhotoWhenStatusMessageMissing(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	if notifier.sendPhotos != 1 {
-		t.Fatalf("expected 1 sent photo, got %d", notifier.sendPhotos)
+		t.Fatalf("expected 1 photo, got %d", notifier.sendPhotos)
 	}
 	if len(notifier.sendReplyTo) != 1 || notifier.sendReplyTo[0] != 0 {
 		t.Fatalf("expected direct photo send without reply target, got %#v", notifier.sendReplyTo)
@@ -334,20 +368,14 @@ func TestProcessDoesNotSendReplacementStatusMessageOnEditFailure(t *testing.T) {
 		taskRepo,
 		&preferenceRepoStub{},
 		&translatorStub{result: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"}},
-		&generatorStub{
-			jobID: "job-1",
-			updates: []domaindraw.JobUpdate{
-				{Status: domaindraw.JobQueued, QueuePosition: 1},
-				{Status: domaindraw.JobCompleted, Image: []byte("png")},
-			},
-		},
+		&generatorStub{image: []byte("png")},
 		notifier,
 		time.Now,
 		func() string { return "task-1" },
-		time.Millisecond,
 		nil,
 	)
 	service.SetScheduler(&schedulerStub{})
+
 	task, err := service.Submit(context.Background(), SubmitCommand{
 		ChatID:           1,
 		Prompt:           "moon",
@@ -360,7 +388,7 @@ func TestProcessDoesNotSendReplacementStatusMessageOnEditFailure(t *testing.T) {
 		t.Fatalf("process: %v", err)
 	}
 	if len(notifier.sentTexts) != 1 {
-		t.Fatalf("expected only the initial status message, got %d", len(notifier.sentTexts))
+		t.Fatalf("expected only initial status message, got %d", len(notifier.sentTexts))
 	}
 	if notifier.sendPhotos != 1 {
 		t.Fatalf("expected completion photo send, got %d", notifier.sendPhotos)
@@ -393,7 +421,6 @@ func TestSubmitStoresStatusMessageBeforeEnqueue(t *testing.T) {
 		notifier,
 		time.Now,
 		func() string { return "task-1" },
-		time.Millisecond,
 		nil,
 	)
 	service.SetScheduler(scheduler)
@@ -407,7 +434,7 @@ func TestSubmitStoresStatusMessageBeforeEnqueue(t *testing.T) {
 		t.Fatalf("submit: %v", err)
 	}
 	if task.StatusMessageID != 1 {
-		t.Fatalf("expected returned task to include status message id 1, got %d", task.StatusMessageID)
+		t.Fatalf("expected status message id 1, got %d", task.StatusMessageID)
 	}
 	if len(notifier.sentTexts) != 1 || notifier.sentTexts[0] != "已入队" {
 		t.Fatalf("unexpected queued text: %#v", notifier.sentTexts)
@@ -424,13 +451,7 @@ func TestSubmitAndProcessLogTaskLifecycle(t *testing.T) {
 		},
 	}
 	notifier := &notifierStub{}
-	generator := &generatorStub{
-		jobID: "job-1",
-		updates: []domaindraw.JobUpdate{
-			{Status: domaindraw.JobQueued, QueuePosition: 2},
-			{Status: domaindraw.JobCompleted, Image: []byte("png")},
-		},
-	}
+	generator := &generatorStub{image: []byte("png")}
 	service := NewService(
 		taskRepo,
 		preferences,
@@ -445,7 +466,6 @@ func TestSubmitAndProcessLogTaskLifecycle(t *testing.T) {
 		notifier,
 		time.Now,
 		func() string { return "task-1" },
-		time.Millisecond,
 		slog.New(slog.NewTextHandler(logBuffer, nil)),
 	)
 	service.SetScheduler(&schedulerStub{})
@@ -470,9 +490,6 @@ func TestSubmitAndProcessLogTaskLifecycle(t *testing.T) {
 		"artists=artist:foo",
 		"task enqueued",
 		"queue_position=1",
-		"task poll updated",
-		"status=queued",
-		"provider_job_id=job-1",
 		"task image sent",
 		"reply_to_message_id=20",
 	} {

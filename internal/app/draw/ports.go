@@ -30,8 +30,7 @@ type PromptTranslator interface {
 }
 
 type ImageGenerator interface {
-	Submit(ctx context.Context, req domaindraw.GenerateRequest) (string, error)
-	Poll(ctx context.Context, jobID string) (domaindraw.JobUpdate, error)
+	Generate(ctx context.Context, req domaindraw.GenerateRequest) ([]byte, error)
 }
 
 type Notifier interface {

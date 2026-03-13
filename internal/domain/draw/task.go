@@ -25,19 +25,9 @@ type Status string
 const (
 	StatusQueued      Status = "queued"
 	StatusTranslating Status = "translating"
-	StatusSubmitting  Status = "submitting"
-	StatusPolling     Status = "polling"
+	StatusGenerating  Status = "generating"
 	StatusCompleted   Status = "completed"
 	StatusFailed      Status = "failed"
-)
-
-type JobStatus string
-
-const (
-	JobQueued     JobStatus = "queued"
-	JobProcessing JobStatus = "processing"
-	JobCompleted  JobStatus = "completed"
-	JobFailed     JobStatus = "failed"
 )
 
 type Task struct {
@@ -48,10 +38,9 @@ type Task struct {
 	Status           Status
 	RequestText      string
 	Shape            Shape
-	Artist           string
+	Artists          string
 	Prompt           string
 	NegativePrompt   string
-	ProviderJobID    string
 	ErrorText        string
 	CreatedAt        time.Time
 	StartedAt        time.Time
@@ -75,20 +64,12 @@ type GenerateRequest struct {
 	NegativePrompt string
 	Characters     []CharacterPrompt
 	Shape          Shape
-	Artists        string
 }
 
-type JobUpdate struct {
-	Status        JobStatus
-	QueuePosition int
-	Image         []byte
-	Error         string
-}
-
-func NewTask(id string, chatID, requestMessageID int64, requestText string, shape Shape, artist string, now time.Time) (Task, error) {
+func NewTask(id string, chatID, requestMessageID int64, requestText string, shape Shape, artists string, now time.Time) (Task, error) {
 	id = strings.TrimSpace(id)
 	requestText = strings.TrimSpace(requestText)
-	artist = strings.TrimSpace(artist)
+	artists = strings.TrimSpace(artists)
 	if id == "" {
 		return Task{}, fmt.Errorf("task id is required")
 	}
@@ -111,7 +92,7 @@ func NewTask(id string, chatID, requestMessageID int64, requestText string, shap
 		RequestMessageID: requestMessageID,
 		RequestText:      requestText,
 		Shape:            shape,
-		Artist:           artist,
+		Artists:          artists,
 		CreatedAt:        now,
 	}, nil
 }
@@ -170,27 +151,17 @@ func (t *Task) SetTranslation(prompt string, negative string) {
 	t.NegativePrompt = strings.TrimSpace(negative)
 }
 
-func (t *Task) MarkSubmitting(now time.Time) error {
+func (t *Task) MarkGenerating(now time.Time) error {
 	if t.Status != StatusTranslating {
-		return fmt.Errorf("cannot move from %s to %s", t.Status, StatusSubmitting)
+		return fmt.Errorf("cannot move from %s to %s", t.Status, StatusGenerating)
 	}
-	t.Status = StatusSubmitting
-	t.StartedAt = normalizeStartedAt(t.StartedAt, now)
-	return nil
-}
-
-func (t *Task) MarkPolling(jobID string, now time.Time) error {
-	if t.Status != StatusSubmitting {
-		return fmt.Errorf("cannot move from %s to %s", t.Status, StatusPolling)
-	}
-	t.Status = StatusPolling
-	t.ProviderJobID = strings.TrimSpace(jobID)
+	t.Status = StatusGenerating
 	t.StartedAt = normalizeStartedAt(t.StartedAt, now)
 	return nil
 }
 
 func (t *Task) MarkCompleted(now time.Time) error {
-	if t.Status != StatusPolling {
+	if t.Status != StatusGenerating {
 		return fmt.Errorf("cannot move from %s to %s", t.Status, StatusCompleted)
 	}
 	t.Status = StatusCompleted

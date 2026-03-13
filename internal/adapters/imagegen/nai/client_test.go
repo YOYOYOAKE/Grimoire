@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,7 +50,7 @@ func TestResolveDimensions(t *testing.T) {
 	}
 }
 
-func TestSubmitBuildsV45PayloadAndPollCompletes(t *testing.T) {
+func TestGenerateBuildsV45Payload(t *testing.T) {
 	var requestBody map[string]any
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodPost {
@@ -73,20 +74,19 @@ func TestSubmitBuildsV45PayloadAndPollCompletes(t *testing.T) {
 		return newBinaryResponse(http.StatusOK, buildZip(t, map[string]string{"image_0.png": "png"})), nil
 	})
 
-	jobID, err := client.Submit(context.Background(), domaindraw.GenerateRequest{
+	image, err := client.Generate(context.Background(), domaindraw.GenerateRequest{
 		Prompt:         "street at night",
 		NegativePrompt: "blurry",
 		Characters: []domaindraw.CharacterPrompt{
 			{Prompt: "girl, long hair", NegativePrompt: "bad hands", Position: "A1"},
 		},
-		Shape:   domaindraw.ShapePortrait,
-		Artists: "artist:foo",
+		Shape: domaindraw.ShapePortrait,
 	})
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("generate: %v", err)
 	}
-	if strings.TrimSpace(jobID) == "" {
-		t.Fatal("expected job id")
+	if string(image) != "png" {
+		t.Fatalf("unexpected image data: %q", image)
 	}
 
 	if requestBody["model"] != supportedModel {
@@ -146,65 +146,43 @@ func TestSubmitBuildsV45PayloadAndPollCompletes(t *testing.T) {
 	if v4PromptCaption["base_caption"] != "street at night, location, very aesthetic, masterpiece, no text" {
 		t.Fatalf("unexpected v4 base caption: %#v", v4PromptCaption["base_caption"])
 	}
-	v4Chars := v4PromptCaption["char_captions"].([]any)
-	if len(v4Chars) != 1 {
-		t.Fatalf("unexpected v4 chars: %#v", v4Chars)
-	}
 
 	v4NegativePrompt := parameters["v4_negative_prompt"].(map[string]any)
 	v4NegativeCaption := v4NegativePrompt["caption"].(map[string]any)
 	if v4NegativeCaption["base_caption"] != baseNegative+", blurry" {
 		t.Fatalf("unexpected v4 negative base caption: %#v", v4NegativeCaption["base_caption"])
 	}
-
-	update, err := client.Poll(context.Background(), jobID)
-	if err != nil {
-		t.Fatalf("poll: %v", err)
-	}
-	if update.Status != domaindraw.JobCompleted {
-		t.Fatalf("unexpected status: %s", update.Status)
-	}
-	if update.QueuePosition != 0 {
-		t.Fatalf("unexpected queue position: %d", update.QueuePosition)
-	}
-	if string(update.Image) != "png" {
-		t.Fatalf("unexpected image data: %q", update.Image)
-	}
-	if _, err := client.Poll(context.Background(), jobID); err == nil {
-		t.Fatal("expected poll cache miss after consume")
-	}
 }
 
-func TestSubmitAcceptsCreatedStatus(t *testing.T) {
+func TestGenerateAcceptsCreatedStatus(t *testing.T) {
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
 		return newBinaryResponse(http.StatusCreated, buildZip(t, map[string]string{"image_0.png": "png"})), nil
 	})
 
-	jobID, err := client.Submit(context.Background(), domaindraw.GenerateRequest{
+	image, err := client.Generate(context.Background(), domaindraw.GenerateRequest{
 		Prompt: "street at night",
 		Shape:  domaindraw.ShapeSquare,
 	})
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("generate: %v", err)
 	}
-	if strings.TrimSpace(jobID) == "" {
-		t.Fatal("expected job id")
+	if string(image) != "png" {
+		t.Fatalf("unexpected image data: %q", image)
 	}
 }
 
-func TestSubmitLogsRequestMetadata(t *testing.T) {
+func TestGenerateLogsRequestMetadata(t *testing.T) {
 	logBuffer := &bytes.Buffer{}
 	client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {
 		return newBinaryResponse(http.StatusOK, buildZip(t, map[string]string{"image_0.png": "png"})), nil
 	})
 
-	_, err := client.Submit(context.Background(), domaindraw.GenerateRequest{
-		Prompt:  "street at night",
-		Shape:   domaindraw.ShapeLandscape,
-		Artists: "artist:foo",
+	_, err := client.Generate(context.Background(), domaindraw.GenerateRequest{
+		Prompt: "street at night",
+		Shape:  domaindraw.ShapeLandscape,
 	})
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("generate: %v", err)
 	}
 
 	logOutput := logBuffer.String()
@@ -214,7 +192,38 @@ func TestSubmitLogsRequestMetadata(t *testing.T) {
 		"model=nai-diffusion-4-5-full",
 		"attempt=1",
 		"shape=landscape",
-		"artists=artist:foo",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in log output, got %s", expected, logOutput)
+		}
+	}
+	if strings.Contains(logOutput, "artists=") {
+		t.Fatalf("did not expect artists field in log output, got %s", logOutput)
+	}
+}
+
+func TestGenerateLogsFailureOnRequestError(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+	client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("EOF")
+	})
+
+	_, err := client.Generate(context.Background(), domaindraw.GenerateRequest{
+		Prompt: "street at night",
+		Shape:  domaindraw.ShapeLandscape,
+	})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"nai request started",
+		"nai request failed",
+		"base_url=https://image.novelai.net",
+		"model=nai-diffusion-4-5-full",
+		"shape=landscape",
+		`error="Post \"https://image.novelai.net/ai/generate-image\": EOF"`,
 	} {
 		if !strings.Contains(logOutput, expected) {
 			t.Fatalf("expected %q in log output, got %s", expected, logOutput)
@@ -222,12 +231,12 @@ func TestSubmitLogsRequestMetadata(t *testing.T) {
 	}
 }
 
-func TestSubmitReturnsErrorOnInvalidZip(t *testing.T) {
+func TestGenerateReturnsErrorOnInvalidZip(t *testing.T) {
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
 		return newBinaryResponse(http.StatusOK, []byte("not-a-zip")), nil
 	})
 
-	_, err := client.Submit(context.Background(), domaindraw.GenerateRequest{
+	_, err := client.Generate(context.Background(), domaindraw.GenerateRequest{
 		Prompt: "street at night",
 		Shape:  domaindraw.ShapeSquare,
 	})
@@ -236,13 +245,6 @@ func TestSubmitReturnsErrorOnInvalidZip(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "open generated zip") {
 		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func TestPollRejectsUnknownJobID(t *testing.T) {
-	client := newTestClient(t, nil, nil)
-	if _, err := client.Poll(context.Background(), "missing"); err == nil {
-		t.Fatal("expected error")
 	}
 }
 
@@ -316,7 +318,6 @@ func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *
 		now: func() time.Time {
 			return time.Unix(100, 0)
 		},
-		completed: make(map[string][]byte),
 	}
 }
 

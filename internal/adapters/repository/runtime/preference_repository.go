@@ -7,16 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
 
 type PreferenceRepository struct {
-	mu         sync.RWMutex
-	path       string
-	preference domainpreferences.Preference
+	path string
 }
 
 type preferenceFile struct {
@@ -29,23 +26,14 @@ func NewPreferenceRepository(executablePath func() (string, error)) (*Preference
 	if err != nil {
 		return nil, err
 	}
-
-	preference, err := loadPreference(path)
-	if err != nil {
+	if _, err := loadPreference(path); err != nil {
 		return nil, err
 	}
-
-	return &PreferenceRepository{
-		path:       path,
-		preference: preference,
-	}, nil
+	return &PreferenceRepository{path: path}, nil
 }
 
 func (r *PreferenceRepository) Get() (domainpreferences.Preference, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	return r.preference, nil
+	return loadPreference(r.path)
 }
 
 func (r *PreferenceRepository) Save(preference domainpreferences.Preference) error {
@@ -64,14 +52,9 @@ func (r *PreferenceRepository) Save(preference domainpreferences.Preference) err
 		return fmt.Errorf("marshal runtime %s: %w", r.path, err)
 	}
 
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	if err := writeAtomically(r.path, data); err != nil {
 		return err
 	}
-
-	r.preference = preference
 	return nil
 }
 

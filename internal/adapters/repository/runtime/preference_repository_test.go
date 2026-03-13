@@ -3,7 +3,6 @@ package runtime
 import (
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"grimoire/internal/domain/draw"
@@ -86,7 +85,7 @@ func TestSaveCreatesRuntimeFile(t *testing.T) {
 	}
 }
 
-func TestPreferenceRepositoryConcurrentAccess(t *testing.T) {
+func TestGetFreshReadsExternalRuntimeChanges(t *testing.T) {
 	dir := t.TempDir()
 	repo, err := NewPreferenceRepository(func() (string, error) {
 		return filepath.Join(dir, "grimoire-bot"), nil
@@ -95,26 +94,26 @@ func TestPreferenceRepositoryConcurrentAccess(t *testing.T) {
 		t.Fatalf("new repository: %v", err)
 	}
 
-	var wg sync.WaitGroup
-	for idx := 0; idx < 16; idx++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			preference, err := repo.Get()
-			if err != nil {
-				t.Errorf("get: %v", err)
-				return
-			}
-			if i%2 == 0 {
-				preference.SetShape(draw.ShapeLandscape)
-			} else {
-				preference.SetShape(draw.ShapeSquare)
-			}
-			preference.SetArtists("artist:foo")
-			if err := repo.Save(preference); err != nil {
-				t.Errorf("save: %v", err)
-			}
-		}(idx)
+	preference := domainpreferences.DefaultPreference()
+	preference.SetShape(draw.ShapeLandscape)
+	preference.SetArtists("artist:foo")
+	if err := repo.Save(preference); err != nil {
+		t.Fatalf("save: %v", err)
 	}
-	wg.Wait()
+
+	path := filepath.Join(dir, "runtime.json")
+	if err := os.WriteFile(path, []byte(`{"shape":"square","artists":"artist:bar"}`), 0o644); err != nil {
+		t.Fatalf("write runtime: %v", err)
+	}
+
+	got, err := repo.Get()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Shape != draw.ShapeSquare {
+		t.Fatalf("unexpected shape: %s", got.Shape)
+	}
+	if got.Artists != "artist:bar" {
+		t.Fatalf("unexpected artists: %q", got.Artists)
+	}
 }

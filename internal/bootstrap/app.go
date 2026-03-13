@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"time"
 
 	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
@@ -45,9 +44,8 @@ func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
 		openai.NewFailoverClient(cfg.LLMs, logger),
 		imageGenerator,
 		telegramBot,
-		func() time.Time { return time.Now() },
+		nil,
 		func() string { return memoryrepo.NewTaskID() },
-		time.Duration(cfg.NAI.PollIntervalSec)*time.Second,
 		logger,
 	)
 

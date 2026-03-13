@@ -36,9 +36,6 @@ nai:
 	if cfg.LLMs[0].TimeoutSec != 180 {
 		t.Fatalf("unexpected llm timeout: %d", cfg.LLMs[0].TimeoutSec)
 	}
-	if cfg.NAI.PollIntervalSec != 5 {
-		t.Fatalf("unexpected poll interval: %d", cfg.NAI.PollIntervalSec)
-	}
 }
 
 func TestLoadRejectsUnknownField(t *testing.T) {

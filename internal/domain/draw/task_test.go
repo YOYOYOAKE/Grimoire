@@ -14,11 +14,8 @@ func TestTaskLifecycle(t *testing.T) {
 	if err := task.MarkTranslating(now); err != nil {
 		t.Fatalf("mark translating: %v", err)
 	}
-	if err := task.MarkSubmitting(now); err != nil {
-		t.Fatalf("mark submitting: %v", err)
-	}
-	if err := task.MarkPolling("job-1", now); err != nil {
-		t.Fatalf("mark polling: %v", err)
+	if err := task.MarkGenerating(now); err != nil {
+		t.Fatalf("mark generating: %v", err)
 	}
 	if err := task.MarkCompleted(now); err != nil {
 		t.Fatalf("mark completed: %v", err)

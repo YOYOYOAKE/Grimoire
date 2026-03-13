@@ -18,7 +18,6 @@ import (
 )
 
 const apiBase = "https://api.telegram.org"
-const officialNAIImageBaseURL = "https://image.novelai.net"
 
 const (
 	cbShapeSmallPortrait  = "img:shape:small-portrait"
@@ -30,8 +29,8 @@ const (
 	cbShapeLargePortrait  = "img:shape:large-portrait"
 	cbShapeLargeLandscape = "img:shape:large-landscape"
 	cbShapeLargeSquare    = "img:shape:large-square"
-	cbSetArtist           = "img:artist:set"
-	cbClearArtist         = "img:artist:clear"
+	cbSetArtists          = "img:artists:set"
+	cbClearArtists        = "img:artists:clear"
 )
 
 type DrawService interface {
@@ -58,8 +57,8 @@ type Bot struct {
 	preferenceService PreferenceService
 	balanceService    BalanceService
 
-	pendingArtistMu sync.Mutex
-	pendingArtist   bool
+	pendingArtistsMu sync.Mutex
+	pendingArtists   bool
 }
 
 func NewBot(cfg config.Config, logger *slog.Logger) *Bot {
@@ -145,7 +144,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 		return
 	}
 	if !b.isAdmin(message.From.ID) {
-		_, _ = b.sendMessage(ctx, message.Chat.ID, "无权限", nil, 0)
+		b.sendSimpleMessage(ctx, message.Chat.ID, "无权限")
 		return
 	}
 
@@ -153,27 +152,28 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	command := firstWord(text)
 	switch command {
 	case "/start":
-		b.clearPendingArtist()
+		b.clearPendingArtists()
 		_, _ = b.sendMessage(ctx, message.Chat.ID, buildStartText(), nil, 0)
 		return
 	case "/img":
-		b.clearPendingArtist()
+		b.clearPendingArtists()
 		b.sendImageMenu(ctx, message.Chat.ID, 0, "")
 		return
 	case "/balance":
-		b.clearPendingArtist()
+		b.clearPendingArtists()
 		b.sendBalance(ctx, message.Chat.ID)
 		return
 	}
 
-	if b.isPendingArtist() {
+	if b.isPendingArtists() {
 		if text == "" {
-			_, _ = b.sendMessage(ctx, message.Chat.ID, "请输入新的画师串，或发送 /start 取消。", nil, 0)
+			b.sendSimpleMessage(ctx, message.Chat.ID, "请输入新的画师串，或发送 /start 取消。")
 			return
 		}
-		b.clearPendingArtist()
+		b.clearPendingArtists()
 		if _, err := b.preferenceService.UpdateArtists(text); err != nil {
-			_, _ = b.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("设置画师串失败: %v", err), nil, 0)
+			b.logWarn("update artists failed", "chat_id", message.Chat.ID, "error", err)
+			b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("设置画师串失败: %v", err))
 			return
 		}
 		b.sendImageMenu(ctx, message.Chat.ID, 0, "全局画师串已更新。")
@@ -184,7 +184,8 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 		return
 	}
 	if b.drawService == nil {
-		_, _ = b.sendMessage(ctx, message.Chat.ID, "绘图服务未初始化", nil, 0)
+		b.logWarn("draw service is not initialized", "chat_id", message.Chat.ID)
+		b.sendSimpleMessage(ctx, message.Chat.ID, "绘图服务未初始化")
 		return
 	}
 	if _, err := b.drawService.Submit(ctx, drawapp.SubmitCommand{
@@ -192,7 +193,8 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 		Prompt:           text,
 		RequestMessageID: message.MessageID,
 	}); err != nil {
-		_, _ = b.sendMessage(ctx, message.Chat.ID, fmt.Sprintf("创建任务失败: %v", err), nil, 0)
+		b.logWarn("submit draw task failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
+		b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("创建任务失败: %v", err))
 	}
 }
 
@@ -230,12 +232,12 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargeLandscape)
 	case cbShapeLargeSquare:
 		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargeSquare)
-	case cbSetArtist:
-		b.setPendingArtist()
-		_ = b.answerCallbackQuery(ctx, query.ID, "请发送新的画师串", false)
-		_, _ = b.sendMessage(ctx, query.Message.Chat.ID, "请发送新的画师串，或发送 /start 取消。", nil, 0)
+	case cbSetArtists:
+		b.setPendingArtists()
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "请发送新的画师串", false)
+		b.sendSimpleMessage(ctx, query.Message.Chat.ID, "请发送新的画师串，或发送 /start 取消。")
 		return
-	case cbClearArtist:
+	case cbClearArtists:
 		pref, err = b.preferenceService.ClearArtists()
 	default:
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
@@ -243,17 +245,19 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	}
 
 	if err != nil {
-		_ = b.answerCallbackQuery(ctx, query.ID, "设置失败", true)
+		b.logWarn("update image preference failed", "chat_id", query.Message.Chat.ID, "callback_data", query.Data, "error", err)
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "设置失败", true)
 		return
 	}
-	_ = b.answerCallbackQuery(ctx, query.ID, "已更新", false)
+	b.answerCallbackQueryBestEffort(ctx, query.ID, "已更新", false)
 	_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildImageMenuText("", pref), imageMenuMarkup())
 }
 
 func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, messageID int64, notice string) {
 	pref, err := b.preferenceService.Get()
 	if err != nil {
-		_, _ = b.sendMessage(ctx, chatID, fmt.Sprintf("加载偏好失败: %v", err), nil, 0)
+		b.logWarn("load image preference failed", "chat_id", chatID, "error", err)
+		b.sendSimpleMessage(ctx, chatID, fmt.Sprintf("加载偏好失败: %v", err))
 		return
 	}
 	text := buildImageMenuText(notice, pref)
@@ -269,22 +273,22 @@ func (b *Bot) isAdmin(userID int64) bool {
 	return b.cfg.Telegram.AdminUserID == userID
 }
 
-func (b *Bot) setPendingArtist() {
-	b.pendingArtistMu.Lock()
-	b.pendingArtist = true
-	b.pendingArtistMu.Unlock()
+func (b *Bot) setPendingArtists() {
+	b.pendingArtistsMu.Lock()
+	b.pendingArtists = true
+	b.pendingArtistsMu.Unlock()
 }
 
-func (b *Bot) clearPendingArtist() {
-	b.pendingArtistMu.Lock()
-	b.pendingArtist = false
-	b.pendingArtistMu.Unlock()
+func (b *Bot) clearPendingArtists() {
+	b.pendingArtistsMu.Lock()
+	b.pendingArtists = false
+	b.pendingArtistsMu.Unlock()
 }
 
-func (b *Bot) isPendingArtist() bool {
-	b.pendingArtistMu.Lock()
-	ok := b.pendingArtist
-	b.pendingArtistMu.Unlock()
+func (b *Bot) isPendingArtists() bool {
+	b.pendingArtistsMu.Lock()
+	ok := b.pendingArtists
+	b.pendingArtistsMu.Unlock()
 	return ok
 }
 
@@ -319,8 +323,8 @@ func imageMenuMarkup() *InlineKeyboardMarkup {
 				{Text: "Large Square", CallbackData: cbShapeLargeSquare},
 			},
 			{
-				{Text: "设置画师串", CallbackData: cbSetArtist},
-				{Text: "清空画师串", CallbackData: cbClearArtist},
+				{Text: "设置画师串", CallbackData: cbSetArtists},
+				{Text: "清空画师串", CallbackData: cbClearArtists},
 			},
 		},
 	}
@@ -346,26 +350,20 @@ func firstWord(text string) string {
 }
 
 func (b *Bot) sendBalance(ctx context.Context, chatID int64) {
-	if !b.balanceEnabled() {
-		_, _ = b.sendMessage(ctx, chatID, "无法使用", nil, 0)
-		return
-	}
 	if b.balanceService == nil {
-		_, _ = b.sendMessage(ctx, chatID, "余额服务未初始化", nil, 0)
+		b.logWarn("balance service is not initialized", "chat_id", chatID)
+		b.sendSimpleMessage(ctx, chatID, "余额服务未初始化")
 		return
 	}
 
 	balance, err := b.balanceService.GetBalance(ctx)
 	if err != nil {
-		_, _ = b.sendMessage(ctx, chatID, fmt.Sprintf("查询余额失败: %v", err), nil, 0)
+		b.logWarn("query balance failed", "chat_id", chatID, "error", err)
+		b.sendSimpleMessage(ctx, chatID, fmt.Sprintf("查询余额失败: %v", err))
 		return
 	}
 
-	_, _ = b.sendMessage(ctx, chatID, buildBalanceText(balance), nil, 0)
-}
-
-func (b *Bot) balanceEnabled() bool {
-	return strings.TrimRight(strings.TrimSpace(b.cfg.NAI.BaseURL), "/") == officialNAIImageBaseURL
+	b.sendSimpleMessage(ctx, chatID, buildBalanceText(balance))
 }
 
 func buildBalanceText(balance domainnai.AccountBalance) string {
@@ -381,4 +379,22 @@ func buildBalanceText(balance domainnai.AccountBalance) string {
 		balance.TrialImagesLeft,
 		subscriptionStatus,
 	)
+}
+
+func (b *Bot) sendSimpleMessage(ctx context.Context, chatID int64, text string) {
+	if _, err := b.sendMessage(ctx, chatID, text, nil, 0); err != nil {
+		b.logWarn("send telegram message failed", "chat_id", chatID, "error", err)
+	}
+}
+
+func (b *Bot) answerCallbackQueryBestEffort(ctx context.Context, callbackID string, text string, showAlert bool) {
+	if err := b.answerCallbackQuery(ctx, callbackID, text, showAlert); err != nil {
+		b.logWarn("answer callback query failed", "callback_id", callbackID, "error", err)
+	}
+}
+
+func (b *Bot) logWarn(message string, attrs ...any) {
+	if b.logger != nil {
+		b.logger.Warn(message, attrs...)
+	}
 }

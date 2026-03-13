@@ -78,9 +78,6 @@ func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *
 			BotToken:    "token",
 			AdminUserID: 1,
 		},
-		NAI: config.NAI{
-			BaseURL: officialNAIImageBaseURL,
-		},
 	}, nil)
 	bot.httpClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -160,7 +157,7 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 
 func TestPendingArtistFlow(t *testing.T) {
 	bot, _, prefService, _, _ := newTestBot(t)
-	bot.setPendingArtist()
+	bot.setPendingArtists()
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 11,
 		From:      &User{ID: 1},
@@ -171,7 +168,7 @@ func TestPendingArtistFlow(t *testing.T) {
 	if prefService.pref.Artists != "artist:foo" {
 		t.Fatalf("unexpected artist: %q", prefService.pref.Artists)
 	}
-	if bot.isPendingArtist() {
+	if bot.isPendingArtists() {
 		t.Fatal("expected pending artist cleared")
 	}
 }
@@ -263,23 +260,6 @@ func TestHandleBalanceCommandSendsError(t *testing.T) {
 
 	if !strings.Contains(buffer.String(), `查询余额失败: boom`) {
 		t.Fatalf("expected balance error in output, got %s", buffer.String())
-	}
-}
-
-func TestHandleBalanceCommandReturnsUnavailableForNonOfficialBaseURL(t *testing.T) {
-	bot, _, _, _, buffer := newTestBot(t)
-	bot.cfg.NAI.BaseURL = "https://image.idlecloud.cc/api"
-
-	bot.handleMessage(context.Background(), Message{
-		MessageID: 12,
-		From:      &User{ID: 1},
-		Chat:      Chat{ID: 100},
-		Text:      "/balance",
-	})
-
-	logOutput := buffer.String()
-	if !strings.Contains(logOutput, `"text":"无法使用"`) {
-		t.Fatalf("expected unavailable message, got %s", logOutput)
 	}
 }
 

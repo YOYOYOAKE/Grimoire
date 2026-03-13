@@ -11,7 +11,6 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"grimoire/internal/config"
@@ -32,10 +31,6 @@ type Client struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 	now        func() time.Time
-
-	mu        sync.Mutex
-	completed map[string][]byte
-	nextJobID uint64
 }
 
 func NewClient(cfg config.Config, logger *slog.Logger) (*Client, error) {
@@ -51,17 +46,17 @@ func NewClient(cfg config.Config, logger *slog.Logger) (*Client, error) {
 		httpClient: httpclient.New(cfg.NAI.TimeoutSec, cfg.NAI.Proxy, logger, "nai"),
 		logger:     logger,
 		now:        time.Now,
-		completed:  make(map[string][]byte),
 	}, nil
 }
 
-func (c *Client) Submit(ctx context.Context, req domaindraw.GenerateRequest) (string, error) {
+func (c *Client) Generate(ctx context.Context, req domaindraw.GenerateRequest) ([]byte, error) {
 	payload, err := c.buildPayload(req)
 	if err != nil {
-		return "", err
+		c.logGenerateFailure("build nai payload failed", req.Shape, err, "")
+		return nil, err
 	}
 
-	logSubmitRequest(c.logger, c.cfg.NAI.BaseURL, c.cfg.NAI.Model, 1, req.Shape, req.Artists)
+	logSubmitRequest(c.logger, c.cfg.NAI.BaseURL, c.cfg.NAI.Model, 1, req.Shape)
 
 	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.NAI.TimeoutSec)*time.Second)
 	defer cancel()
@@ -69,77 +64,64 @@ func (c *Client) Submit(ctx context.Context, req domaindraw.GenerateRequest) (st
 	endpoint := strings.TrimRight(c.cfg.NAI.BaseURL, "/") + "/ai/generate-image"
 	httpReq, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", fmt.Errorf("create nai request: %w", err)
+		c.logGenerateFailure("create nai request failed", req.Shape, err, "")
+		return nil, fmt.Errorf("create nai request: %w", err)
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+c.cfg.NAI.APIKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("submit nai request: %w", err)
+		c.logGenerateFailure("nai request failed", req.Shape, err, "")
+		return nil, fmt.Errorf("generate nai request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("read submit response: %w", err)
+		c.logGenerateFailure("read nai response failed", req.Shape, err, "")
+		return nil, fmt.Errorf("read generate response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("submit nai status=%d body=%s", resp.StatusCode, truncate(string(body), 400))
+		c.logGenerateFailure("nai returned non-success status", req.Shape, fmt.Errorf("status=%d", resp.StatusCode), string(body))
+		return nil, fmt.Errorf("generate nai status=%d body=%s", resp.StatusCode, truncate(string(body), 400))
 	}
 
 	image, err := extractFirstImage(body)
 	if err != nil {
-		return "", err
+		c.logGenerateFailure("extract generated image failed", req.Shape, err, string(body))
+		return nil, err
 	}
-
-	return c.storeCompletedImage(image), nil
-}
-
-func (c *Client) Poll(_ context.Context, jobID string) (domaindraw.JobUpdate, error) {
-	jobID = strings.TrimSpace(jobID)
-	if jobID == "" {
-		return domaindraw.JobUpdate{}, fmt.Errorf("job id is required")
-	}
-
-	c.mu.Lock()
-	image, ok := c.completed[jobID]
-	if ok {
-		delete(c.completed, jobID)
-	}
-	c.mu.Unlock()
-	if !ok {
-		return domaindraw.JobUpdate{}, fmt.Errorf("unknown official nai job %q", jobID)
-	}
-
-	return domaindraw.JobUpdate{
-		Status:        domaindraw.JobCompleted,
-		QueuePosition: 0,
-		Image:         append([]byte(nil), image...),
-	}, nil
+	logGenerateSuccess(c.logger, c.cfg.NAI.BaseURL, c.cfg.NAI.Model, req.Shape, len(image))
+	return image, nil
 }
 
 func (c *Client) GetBalance(ctx context.Context) (domainnai.AccountBalance, error) {
+	logBalanceRequest(c.logger)
 	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.NAI.TimeoutSec)*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, balanceURL, nil)
 	if err != nil {
+		c.logBalanceFailure("create user data request failed", err, "")
 		return domainnai.AccountBalance{}, fmt.Errorf("create user data request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.cfg.NAI.APIKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		c.logBalanceFailure("query user data failed", err, "")
 		return domainnai.AccountBalance{}, fmt.Errorf("query user data: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		c.logBalanceFailure("read user data response failed", err, "")
 		return domainnai.AccountBalance{}, fmt.Errorf("read user data response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		c.logBalanceFailure("user data returned non-success status", fmt.Errorf("status=%d", resp.StatusCode), string(body))
 		return domainnai.AccountBalance{}, fmt.Errorf("user data status=%d body=%s", resp.StatusCode, truncate(string(body), 400))
 	}
 
@@ -157,16 +139,19 @@ func (c *Client) GetBalance(ctx context.Context) (domainnai.AccountBalance, erro
 		} `json:"information"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
+		c.logBalanceFailure("decode user data response failed", err, string(body))
 		return domainnai.AccountBalance{}, fmt.Errorf("decode user data response: %w", err)
 	}
 
-	return domainnai.AccountBalance{
+	balance := domainnai.AccountBalance{
 		PurchasedTrainingSteps: out.Subscription.TrainingStepsLeft.PurchasedTrainingSteps,
 		FixedTrainingStepsLeft: out.Subscription.TrainingStepsLeft.FixedTrainingStepsLeft,
 		TrialImagesLeft:        out.Information.TrialImagesLeft,
 		SubscriptionTier:       out.Subscription.Tier,
 		SubscriptionActive:     out.Subscription.Active,
-	}, nil
+	}
+	logBalanceSuccess(c.logger, balance)
+	return balance, nil
 }
 
 func (c *Client) buildPayload(req domaindraw.GenerateRequest) ([]byte, error) {
@@ -227,16 +212,6 @@ func (c *Client) buildPayload(req domaindraw.GenerateRequest) ([]byte, error) {
 		return nil, fmt.Errorf("marshal nai request: %w", err)
 	}
 	return data, nil
-}
-
-func (c *Client) storeCompletedImage(image []byte) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.nextJobID++
-	jobID := fmt.Sprintf("nai-official-%d-%d", c.now().UnixNano(), c.nextJobID)
-	c.completed[jobID] = append([]byte(nil), image...)
-	return jobID
 }
 
 func buildPrompt(prompt string) string {
@@ -376,7 +351,7 @@ func extractFirstImage(data []byte) ([]byte, error) {
 	return nil, fmt.Errorf("generated zip did not contain any image")
 }
 
-func logSubmitRequest(logger *slog.Logger, baseURL string, model string, attempt int, shape domaindraw.Shape, artists string) {
+func logSubmitRequest(logger *slog.Logger, baseURL string, model string, attempt int, shape domaindraw.Shape) {
 	if logger == nil {
 		return
 	}
@@ -387,8 +362,71 @@ func logSubmitRequest(logger *slog.Logger, baseURL string, model string, attempt
 		"model", model,
 		"attempt", attempt,
 		"shape", shape,
-		"artists", strings.TrimSpace(artists),
 	)
+}
+
+func logGenerateSuccess(logger *slog.Logger, baseURL string, model string, shape domaindraw.Shape, bytes int) {
+	if logger == nil {
+		return
+	}
+
+	logger.Info(
+		"nai generated",
+		"base_url", strings.TrimSpace(baseURL),
+		"model", model,
+		"shape", shape,
+		"bytes", bytes,
+	)
+}
+
+func (c *Client) logGenerateFailure(message string, shape domaindraw.Shape, err error, rawResponse string) {
+	if c.logger == nil {
+		return
+	}
+
+	attrs := []any{
+		"base_url", strings.TrimSpace(c.cfg.NAI.BaseURL),
+		"model", c.cfg.NAI.Model,
+		"shape", shape,
+		"error", err,
+	}
+	if strings.TrimSpace(rawResponse) != "" {
+		attrs = append(attrs, "raw_response", truncate(rawResponse, 2000))
+	}
+	c.logger.Error(message, attrs...)
+}
+
+func logBalanceRequest(logger *slog.Logger) {
+	if logger == nil {
+		return
+	}
+	logger.Info("nai balance request started")
+}
+
+func logBalanceSuccess(logger *slog.Logger, balance domainnai.AccountBalance) {
+	if logger == nil {
+		return
+	}
+	logger.Info(
+		"nai balance received",
+		"purchased_training_steps", balance.PurchasedTrainingSteps,
+		"fixed_training_steps_left", balance.FixedTrainingStepsLeft,
+		"trial_images_left", balance.TrialImagesLeft,
+		"subscription_tier", balance.SubscriptionTier,
+		"subscription_active", balance.SubscriptionActive,
+	)
+}
+
+func (c *Client) logBalanceFailure(message string, err error, rawResponse string) {
+	if c.logger == nil {
+		return
+	}
+
+	attrs := []any{"error", err}
+	if strings.TrimSpace(rawResponse) != "" {
+		attrs = append(attrs, "raw_response", truncate(rawResponse, 2000))
+	}
+	c.logger.Error(message, attrs...)
 }
 
 func roundToOneDecimal(value float64) float64 {

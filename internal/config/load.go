@@ -48,7 +48,6 @@ func normalize(cfg Config) Config {
 	}
 
 	normalizeProvider(&cfg.NAI.BaseURL, &cfg.NAI.APIKey, &cfg.NAI.Model, &cfg.NAI.Proxy, false, &cfg.NAI.TimeoutSec, 180)
-	cfg.NAI.PollIntervalSec = defaultInt(cfg.NAI.PollIntervalSec, 5)
 
 	return cfg
 }
@@ -118,7 +117,6 @@ nai:
   model: "nai-diffusion-4-5-full"
   proxy: ""
   timeout_sec: 180
-  poll_interval_sec: 5
 `
 }
 

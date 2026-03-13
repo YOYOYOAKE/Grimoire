@@ -18,16 +18,15 @@ type SubmitCommand struct {
 }
 
 type Service struct {
-	tasks        TaskRepository
-	preferences  PreferenceRepository
-	translator   PromptTranslator
-	generator    ImageGenerator
-	notifier     Notifier
-	now          func() time.Time
-	idGenerator  func() string
-	pollInterval time.Duration
-	logger       *slog.Logger
-	scheduler    Scheduler
+	tasks       TaskRepository
+	preferences PreferenceRepository
+	translator  PromptTranslator
+	generator   ImageGenerator
+	notifier    Notifier
+	now         func() time.Time
+	idGenerator func() string
+	logger      *slog.Logger
+	scheduler   Scheduler
 }
 
 func NewService(
@@ -38,7 +37,6 @@ func NewService(
 	notifier Notifier,
 	now func() time.Time,
 	idGenerator func() string,
-	pollInterval time.Duration,
 	logger *slog.Logger,
 ) *Service {
 	if now == nil {
@@ -47,22 +45,18 @@ func NewService(
 	if idGenerator == nil {
 		idGenerator = func() string { return "" }
 	}
-	if pollInterval <= 0 {
-		pollInterval = 5 * time.Second
-	}
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Service{
-		tasks:        tasks,
-		preferences:  preferences,
-		translator:   translator,
-		generator:    generator,
-		notifier:     notifier,
-		now:          now,
-		idGenerator:  idGenerator,
-		pollInterval: pollInterval,
-		logger:       logger,
+		tasks:       tasks,
+		preferences: preferences,
+		translator:  translator,
+		generator:   generator,
+		notifier:    notifier,
+		now:         now,
+		idGenerator: idGenerator,
+		logger:      logger,
 	}
 }
 
@@ -75,7 +69,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		return domaindraw.Task{}, fmt.Errorf("scheduler is not configured")
 	}
 
-	shape, artist, err := s.preferenceSnapshot()
+	shape, artists, err := s.preferenceSnapshot()
 	if err != nil {
 		return domaindraw.Task{}, err
 	}
@@ -86,7 +80,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		command.RequestMessageID,
 		command.Prompt,
 		shape,
-		artist,
+		artists,
 		s.now(),
 	)
 	if err != nil {
@@ -104,7 +98,7 @@ func (s *Service) Submit(ctx context.Context, command SubmitCommand) (domaindraw
 		"chat_id", task.ChatID,
 		"prompt", task.RequestText,
 		"shape", task.Shape,
-		"artists", task.Artist,
+		"artists", task.Artists,
 	)
 
 	statusMessageID, err := s.notifier.SendText(ctx, task.ChatID, task.RequestMessageID, queuedText())
@@ -142,95 +136,39 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 	if err != nil {
 		return s.failTask(ctx, &task, fmt.Sprintf("LLM 翻译失败: %v", err))
 	}
-	task.SetTranslation(mergeArtist(task.Artist, translation.Prompt), translation.NegativePrompt)
+	task.SetTranslation(mergeArtists(task.Artists, translation.Prompt), translation.NegativePrompt)
 
-	if err := task.MarkSubmitting(s.now()); err != nil {
+	if err := task.MarkGenerating(s.now()); err != nil {
 		return err
 	}
-	if err := s.tasks.Update(ctx, task); err != nil {
+	if err := s.persistAndNotify(ctx, &task, drawingText()); err != nil {
 		return err
 	}
 
-	jobID, err := s.generator.Submit(ctx, domaindraw.GenerateRequest{
+	image, err := s.generator.Generate(ctx, domaindraw.GenerateRequest{
 		Prompt:         task.Prompt,
 		NegativePrompt: task.NegativePrompt,
 		Characters:     translation.Characters,
 		Shape:          task.Shape,
-		Artists:        task.Artist,
 	})
 	if err != nil {
-		return s.failTask(ctx, &task, fmt.Sprintf("提交绘图任务失败: %v", err))
+		return s.failTask(ctx, &task, fmt.Sprintf("生成图像失败: %v", err))
 	}
 
-	if err := task.MarkPolling(jobID, s.now()); err != nil {
+	if err := s.notifier.SendPhoto(ctx, task.ChatID, task.RequestMessageID, task.ID+".png", "", image); err != nil {
+		return s.failTask(ctx, &task, fmt.Sprintf("发送图片失败: %v", err))
+	}
+	s.logger.Info(
+		"task image sent",
+		"task_id", task.ID,
+		"chat_id", task.ChatID,
+		"reply_to_message_id", task.RequestMessageID,
+	)
+	s.deleteStatusMessage(ctx, task)
+	if err := task.MarkCompleted(s.now()); err != nil {
 		return err
 	}
-	if err := s.persistAndNotify(ctx, &task, drawingText(0)); err != nil {
-		return err
-	}
-
-	lastDetail := ""
-	for {
-		update, err := s.generator.Poll(ctx, task.ProviderJobID)
-		if err != nil {
-			return s.failTask(ctx, &task, fmt.Sprintf("轮询失败: %v", err))
-		}
-		s.logger.Info(
-			"task poll updated",
-			"task_id", task.ID,
-			"provider_job_id", task.ProviderJobID,
-			"status", update.Status,
-			"queue_position", update.QueuePosition,
-		)
-
-		switch update.Status {
-		case domaindraw.JobQueued:
-			detail := fmt.Sprintf("queued:%d", update.QueuePosition)
-			if detail != lastDetail {
-				lastDetail = detail
-				if err := s.upsertStatus(ctx, &task, drawingText(update.QueuePosition)); err != nil {
-					s.logger.Warn("update queued poll status failed", "task_id", task.ID, "error", err)
-				}
-			}
-		case domaindraw.JobProcessing:
-			if lastDetail != "processing" {
-				lastDetail = "processing"
-				if err := s.upsertStatus(ctx, &task, drawingText(update.QueuePosition)); err != nil {
-					s.logger.Warn("update processing poll status failed", "task_id", task.ID, "error", err)
-				}
-			}
-		case domaindraw.JobCompleted:
-			if err := s.notifier.SendPhoto(ctx, task.ChatID, task.RequestMessageID, task.ID+".png", "", update.Image); err != nil {
-				return s.failTask(ctx, &task, fmt.Sprintf("发送图片失败: %v", err))
-			}
-			s.logger.Info(
-				"task image sent",
-				"task_id", task.ID,
-				"chat_id", task.ChatID,
-				"reply_to_message_id", task.RequestMessageID,
-				"provider_job_id", task.ProviderJobID,
-			)
-			s.deleteStatusMessage(ctx, task)
-			if err := task.MarkCompleted(s.now()); err != nil {
-				return err
-			}
-			return s.deleteTask(ctx, task.ID)
-		case domaindraw.JobFailed:
-			reason := strings.TrimSpace(update.Error)
-			if reason == "" {
-				reason = "图像生成失败"
-			}
-			return s.failTask(ctx, &task, reason)
-		default:
-			return s.failTask(ctx, &task, fmt.Sprintf("未知任务状态: %s", update.Status))
-		}
-
-		select {
-		case <-ctx.Done():
-			return s.failTask(context.Background(), &task, "任务处理中断")
-		case <-time.After(s.pollInterval):
-		}
-	}
+	return s.deleteTask(ctx, task.ID)
 }
 
 func (s *Service) preferenceSnapshot() (domaindraw.Shape, string, error) {
@@ -276,6 +214,13 @@ func (s *Service) failTask(ctx context.Context, task *domaindraw.Task, reason st
 	if err := task.MarkFailed(reason, s.now()); err != nil {
 		return err
 	}
+	s.logger.Error(
+		"task failed",
+		"task_id", task.ID,
+		"chat_id", task.ChatID,
+		"request_message_id", task.RequestMessageID,
+		"reason", task.ErrorText,
+	)
 	if err := s.upsertStatus(ctx, task, failedText(task.ErrorText)); err != nil {
 		s.logger.Warn("send failed status failed", "task_id", task.ID, "error", err)
 	}
@@ -298,15 +243,15 @@ func (s *Service) deleteStatusMessage(ctx context.Context, task domaindraw.Task)
 	}
 }
 
-func mergeArtist(artist string, prompt string) string {
-	artist = strings.TrimSpace(artist)
+func mergeArtists(artists string, prompt string) string {
+	artists = strings.TrimSpace(artists)
 	prompt = strings.TrimSpace(prompt)
 	switch {
-	case artist == "":
+	case artists == "":
 		return prompt
 	case prompt == "":
-		return artist
+		return artists
 	default:
-		return artist + ", " + prompt
+		return artists + ", " + prompt
 	}
 }
