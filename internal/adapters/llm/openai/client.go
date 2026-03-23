@@ -211,7 +211,7 @@ func translatePromptTool() map[string]any {
 				"properties": map[string]any{
 					"prompt": map[string]string{
 						"type":        "string",
-						"description": "Shared scene-level English prompt tags only. Do not include character-specific tags here.",
+						"description": "Shared scene-level English prompt tags only. Use underscore-separated tags, do not include character-specific tags here, and allow weighted tags in the n::tag:: format for emphasized scene-level details.",
 					},
 					"negative_prompt": map[string]any{
 						"type":        "string",
@@ -226,7 +226,7 @@ func translatePromptTool() map[string]any {
 								"prompt": map[string]any{
 									"type":        "string",
 									"minLength":   1,
-									"description": "Character-specific English prompt tags only.",
+									"description": "Character-specific English prompt tags only. Use underscore-separated tags, use the character_name_(series_name) format for known character identities when applicable, and proactively apply 1.1 to 1.4 weights in the n::tag:: format to subject-defining traits and key actions; increase weights flexibly when the user explicitly emphasizes a detail.",
 								},
 								"negative_prompt": map[string]any{
 									"type":        "string",
