@@ -23,7 +23,7 @@ func (r runnerStub) Run(context.Context) error {
 
 func TestRunGeneratesDefaultConfigAndExitsZero(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
+	path := filepath.Join(dir, "config", "config.yaml")
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 
@@ -35,7 +35,7 @@ func TestRunGeneratesDefaultConfigAndExitsZero(t *testing.T) {
 		func([]string) (string, bool, error) { return path, true, nil },
 		config.Load,
 		config.EnsureDefaultConfig,
-		func(config.Config, *slog.Logger) (appRunner, error) {
+		func(config.Config, string, *slog.Logger) (appRunner, error) {
 			t.Fatal("buildApp should not be called")
 			return nil, nil
 		},
@@ -69,7 +69,7 @@ func TestRunMissingExplicitConfigExitsOne(t *testing.T) {
 		func([]string) (string, bool, error) { return path, false, nil },
 		config.Load,
 		config.EnsureDefaultConfig,
-		func(config.Config, *slog.Logger) (appRunner, error) {
+		func(config.Config, string, *slog.Logger) (appRunner, error) {
 			t.Fatal("buildApp should not be called")
 			return nil, nil
 		},

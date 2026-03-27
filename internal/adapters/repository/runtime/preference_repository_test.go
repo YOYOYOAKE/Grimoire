@@ -11,9 +11,8 @@ import (
 
 func TestNewPreferenceRepositoryUsesDefaultWhenRuntimeMissing(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := NewPreferenceRepository(func() (string, error) {
-		return filepath.Join(dir, "grimoire-bot"), nil
-	})
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	repo, err := NewPreferenceRepository(configPath)
 	if err != nil {
 		t.Fatalf("new repository: %v", err)
 	}
@@ -32,14 +31,16 @@ func TestNewPreferenceRepositoryUsesDefaultWhenRuntimeMissing(t *testing.T) {
 
 func TestNewPreferenceRepositoryRejectsInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "runtime.json")
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	path := filepath.Join(dir, "config", "runtime.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("{"), 0o644); err != nil {
 		t.Fatalf("write runtime: %v", err)
 	}
 
-	_, err := NewPreferenceRepository(func() (string, error) {
-		return filepath.Join(dir, "grimoire-bot"), nil
-	})
+	_, err := NewPreferenceRepository(configPath)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -47,14 +48,16 @@ func TestNewPreferenceRepositoryRejectsInvalidJSON(t *testing.T) {
 
 func TestNewPreferenceRepositoryRejectsInvalidShape(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "runtime.json")
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	path := filepath.Join(dir, "config", "runtime.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir config dir: %v", err)
+	}
 	if err := os.WriteFile(path, []byte(`{"shape":"invalid","artists":""}`), 0o644); err != nil {
 		t.Fatalf("write runtime: %v", err)
 	}
 
-	_, err := NewPreferenceRepository(func() (string, error) {
-		return filepath.Join(dir, "grimoire-bot"), nil
-	})
+	_, err := NewPreferenceRepository(configPath)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -62,9 +65,8 @@ func TestNewPreferenceRepositoryRejectsInvalidShape(t *testing.T) {
 
 func TestSaveCreatesRuntimeFile(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := NewPreferenceRepository(func() (string, error) {
-		return filepath.Join(dir, "grimoire-bot"), nil
-	})
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	repo, err := NewPreferenceRepository(configPath)
 	if err != nil {
 		t.Fatalf("new repository: %v", err)
 	}
@@ -76,7 +78,7 @@ func TestSaveCreatesRuntimeFile(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "runtime.json"))
+	data, err := os.ReadFile(filepath.Join(dir, "config", "runtime.json"))
 	if err != nil {
 		t.Fatalf("read runtime: %v", err)
 	}
@@ -87,9 +89,8 @@ func TestSaveCreatesRuntimeFile(t *testing.T) {
 
 func TestGetFreshReadsExternalRuntimeChanges(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := NewPreferenceRepository(func() (string, error) {
-		return filepath.Join(dir, "grimoire-bot"), nil
-	})
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	repo, err := NewPreferenceRepository(configPath)
 	if err != nil {
 		t.Fatalf("new repository: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestGetFreshReadsExternalRuntimeChanges(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	path := filepath.Join(dir, "runtime.json")
+	path := filepath.Join(dir, "config", "runtime.json")
 	if err := os.WriteFile(path, []byte(`{"shape":"square","artists":"artist:bar"}`), 0o644); err != nil {
 		t.Fatalf("write runtime: %v", err)
 	}
@@ -115,5 +116,33 @@ func TestGetFreshReadsExternalRuntimeChanges(t *testing.T) {
 	}
 	if got.Artists != "artist:bar" {
 		t.Fatalf("unexpected artists: %q", got.Artists)
+	}
+}
+
+func TestResolveRuntimePathUsesConfigDir(t *testing.T) {
+	path, err := resolveRuntimePath("/tmp/grimoire/config/config.yaml")
+	if err != nil {
+		t.Fatalf("resolve runtime path: %v", err)
+	}
+	expected := filepath.Join("/tmp/grimoire/config", "runtime.json")
+	if path != expected {
+		t.Fatalf("unexpected path: %q", path)
+	}
+}
+
+func TestResolveRuntimePathRejectsEmptyConfigPath(t *testing.T) {
+	if _, err := resolveRuntimePath(""); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestResolveRuntimePathUsesExplicitConfigDir(t *testing.T) {
+	path, err := resolveRuntimePath("/tmp/custom/custom.yaml")
+	if err != nil {
+		t.Fatalf("resolve runtime path: %v", err)
+	}
+	expected := filepath.Join("/tmp/custom", "runtime.json")
+	if path != expected {
+		t.Fatalf("unexpected path: %q", path)
 	}
 }

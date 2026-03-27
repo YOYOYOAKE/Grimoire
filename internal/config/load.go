@@ -127,7 +127,7 @@ func resolveStartupPath(args []string, executablePath func() (string, error)) (s
 		if err != nil {
 			return "", false, fmt.Errorf("resolve executable path: %w", err)
 		}
-		return filepath.Join(filepath.Dir(executable), "config.yaml"), true, nil
+		return filepath.Join(filepath.Dir(executable), "config", "config.yaml"), true, nil
 	case 1:
 		return filepath.Clean(args[0]), false, nil
 	default:

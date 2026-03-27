@@ -21,8 +21,8 @@ type preferenceFile struct {
 	Artists string `json:"artists"`
 }
 
-func NewPreferenceRepository(executablePath func() (string, error)) (*PreferenceRepository, error) {
-	path, err := resolveRuntimePath(executablePath)
+func NewPreferenceRepository(configPath string) (*PreferenceRepository, error) {
+	path, err := resolveRuntimePath(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -58,16 +58,13 @@ func (r *PreferenceRepository) Save(preference domainpreferences.Preference) err
 	return nil
 }
 
-func resolveRuntimePath(executablePath func() (string, error)) (string, error) {
-	if executablePath == nil {
-		executablePath = os.Executable
+func resolveRuntimePath(configPath string) (string, error) {
+	configPath = strings.TrimSpace(configPath)
+	if configPath == "" {
+		return "", fmt.Errorf("config path is required")
 	}
 
-	executable, err := executablePath()
-	if err != nil {
-		return "", fmt.Errorf("resolve executable path: %w", err)
-	}
-	return filepath.Join(filepath.Dir(executable), "runtime.json"), nil
+	return filepath.Join(filepath.Dir(filepath.Clean(configPath)), "runtime.json"), nil
 }
 
 func loadPreference(path string) (domainpreferences.Preference, error) {
@@ -97,6 +94,10 @@ func loadPreference(path string) (domainpreferences.Preference, error) {
 
 func writeAtomically(path string, data []byte) (err error) {
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create runtime dir for %s: %w", path, err)
+	}
+
 	tempFile, err := os.CreateTemp(dir, "runtime.json.tmp-*")
 	if err != nil {
 		return fmt.Errorf("create runtime temp file for %s: %w", path, err)

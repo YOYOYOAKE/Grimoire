@@ -7,10 +7,8 @@
 .coverprofile
 coverage.out
 
-# Runtime data
-/data/
-
 # Local secrets/config
+/config/
 /configs/config.yaml
 
 # Logs

@@ -28,8 +28,8 @@ func main() {
 		config.ResolveStartupPath,
 		config.Load,
 		config.EnsureDefaultConfig,
-		func(cfg config.Config, logger *slog.Logger) (appRunner, error) {
-			return bootstrap.NewApp(cfg, logger)
+		func(cfg config.Config, configPath string, logger *slog.Logger) (appRunner, error) {
+			return bootstrap.NewApp(cfg, configPath, logger)
 		},
 	))
 }
@@ -42,7 +42,7 @@ func run(
 	resolveStartupPath func(args []string) (path string, usedDefault bool, err error),
 	loadConfig func(path string) (config.Config, error),
 	ensureDefaultConfig func(path string) error,
-	buildApp func(cfg config.Config, logger *slog.Logger) (appRunner, error),
+	buildApp func(cfg config.Config, configPath string, logger *slog.Logger) (appRunner, error),
 ) int {
 	logger := slog.New(slog.NewTextHandler(stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
@@ -73,7 +73,7 @@ func run(
 		return 1
 	}
 
-	app, err := buildApp(cfg, logger)
+	app, err := buildApp(cfg, configPath, logger)
 	if err != nil {
 		logger.Error("bootstrap app failed", "error", err)
 		fmt.Fprintf(stderr, "应用初始化失败: %v\n", err)

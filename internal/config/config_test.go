@@ -106,7 +106,7 @@ func TestResolveStartupPathUsesExecutableDir(t *testing.T) {
 	if !usedDefault {
 		t.Fatal("expected default path")
 	}
-	expected := filepath.Join("/tmp/grimoire/bin", "config.yaml")
+	expected := filepath.Join("/tmp/grimoire/bin", "config", "config.yaml")
 	if path != expected {
 		t.Fatalf("unexpected path: %q", path)
 	}
@@ -157,7 +157,7 @@ func TestEnsureDefaultConfigWritesTemplate(t *testing.T) {
 
 func TestLoadGeneratedTemplateValidationFails(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
+	path := filepath.Join(dir, "config", "config.yaml")
 	if err := EnsureDefaultConfig(path); err != nil {
 		t.Fatalf("ensure default config: %v", err)
 	}

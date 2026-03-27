@@ -1,6 +1,6 @@
 .git
 .gitignore
 bin/
-data/
+config/
 tmp/
 *.log

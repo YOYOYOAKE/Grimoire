@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
@@ -26,9 +25,9 @@ type App struct {
 	adminChatID int64
 }
 
-func NewApp(cfg config.Config, logger *slog.Logger) (*App, error) {
+func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, error) {
 	taskRepo := memoryrepo.NewTaskRepository()
-	preferenceRepo, err := runtimerepo.NewPreferenceRepository(os.Executable)
+	preferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("init runtime preference repository: %w", err)
 	}

@@ -1,9 +1,0 @@
-services:
-  grimoire-bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: grimoire-bot
-    restart: unless-stopped
-    volumes:
-      - ./data:/data
