@@ -33,7 +33,7 @@ go build -o bin/grimoire-bot ./cmd/grimoire-bot
 ./bin/grimoire-bot /path/to/config.yaml
 ```
 
-## 使用 Docker 部署
+### 使用 Docker 部署
 
 项目已提供 [Dockerfile](/home/YOAKE/dev/Grimoire/docker/Dockerfile)。
 
@@ -64,7 +64,7 @@ docker run -d \
   ghcr.io/yoyoyoake/grimoire:latest
 ```
 
-## 使用 Docker Compose 部署
+### 使用 Docker Compose 部署
 
 首次启动时，程序会自动生成模板配置并退出。
 
