@@ -1,8 +1,6 @@
 package preferences
 
 import (
-	"fmt"
-
 	"grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -20,15 +18,13 @@ func (s *Service) Get() (domainpreferences.Preference, error) {
 }
 
 func (s *Service) UpdateShape(shape draw.Shape) (domainpreferences.Preference, error) {
-	if !shape.Valid() {
-		return domainpreferences.Preference{}, fmt.Errorf("invalid shape %q", shape)
-	}
-
 	preference, err := s.repository.Get()
 	if err != nil {
 		return domainpreferences.Preference{}, err
 	}
-	preference.SetShape(shape)
+	if err := preference.SetShape(shape); err != nil {
+		return domainpreferences.Preference{}, err
+	}
 	if err := s.repository.Save(preference); err != nil {
 		return domainpreferences.Preference{}, err
 	}

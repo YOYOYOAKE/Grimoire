@@ -72,7 +72,9 @@ func TestSaveCreatesRuntimeFile(t *testing.T) {
 	}
 
 	preference := domainpreferences.DefaultPreference()
-	preference.SetShape(draw.ShapePortrait)
+	if err := preference.SetShape(draw.ShapePortrait); err != nil {
+		t.Fatalf("set shape: %v", err)
+	}
 	preference.SetArtists(" artist:foo ")
 	if err := repo.Save(preference); err != nil {
 		t.Fatalf("save: %v", err)
@@ -96,7 +98,9 @@ func TestGetFreshReadsExternalRuntimeChanges(t *testing.T) {
 	}
 
 	preference := domainpreferences.DefaultPreference()
-	preference.SetShape(draw.ShapeLandscape)
+	if err := preference.SetShape(draw.ShapeLandscape); err != nil {
+		t.Fatalf("set shape: %v", err)
+	}
 	preference.SetArtists("artist:foo")
 	if err := repo.Save(preference); err != nil {
 		t.Fatalf("save: %v", err)
@@ -144,5 +148,21 @@ func TestResolveRuntimePathUsesExplicitConfigDir(t *testing.T) {
 	expected := filepath.Join("/tmp/custom", "runtime.json")
 	if path != expected {
 		t.Fatalf("unexpected path: %q", path)
+	}
+}
+
+func TestSaveRejectsInvalidPreference(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config", "config.yaml")
+	repo, err := NewPreferenceRepository(configPath)
+	if err != nil {
+		t.Fatalf("new repository: %v", err)
+	}
+
+	preference := domainpreferences.DefaultPreference()
+	preference.Shape = draw.Shape("invalid")
+
+	if err := repo.Save(preference); err == nil {
+		t.Fatal("expected error")
 	}
 }

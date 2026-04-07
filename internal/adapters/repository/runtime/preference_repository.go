@@ -37,8 +37,8 @@ func (r *PreferenceRepository) Get() (domainpreferences.Preference, error) {
 }
 
 func (r *PreferenceRepository) Save(preference domainpreferences.Preference) error {
-	if !preference.Shape.Valid() {
-		return fmt.Errorf("invalid runtime shape %q", preference.Shape)
+	if err := preference.Validate(); err != nil {
+		return err
 	}
 
 	preference.SetArtists(preference.Artists)
@@ -87,7 +87,9 @@ func loadPreference(path string) (domainpreferences.Preference, error) {
 	}
 
 	preference := domainpreferences.DefaultPreference()
-	preference.SetShape(shape)
+	if err := preference.SetShape(shape); err != nil {
+		return domainpreferences.Preference{}, err
+	}
 	preference.SetArtists(filePreference.Artists)
 	return preference, nil
 }

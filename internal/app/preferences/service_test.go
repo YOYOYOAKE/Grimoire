@@ -52,3 +52,12 @@ func TestUpdateArtistsTrimsWhitespace(t *testing.T) {
 		t.Fatalf("unexpected artists: %q", preference.Artists)
 	}
 }
+
+func TestUpdateShapeRejectsInvalidShape(t *testing.T) {
+	repo := &preferenceRepoStub{preference: domainpreferences.DefaultPreference()}
+	service := NewService(repo)
+
+	if _, err := service.UpdateShape(draw.Shape("invalid")); err == nil {
+		t.Fatal("expected error")
+	}
+}
