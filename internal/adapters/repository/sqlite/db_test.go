@@ -93,3 +93,42 @@ func pragmaInt(t *testing.T, db *sql.DB, name string) int {
 	}
 	return value
 }
+
+func countRows(t *testing.T, db *sql.DB, table string) int {
+	t.Helper()
+
+	var count int
+	query := "SELECT COUNT(*) FROM " + table
+	if err := db.QueryRowContext(context.Background(), query).Scan(&count); err != nil {
+		t.Fatalf("count rows in %s: %v", table, err)
+	}
+	return count
+}
+
+func tableExists(t *testing.T, db *sql.DB, table string) bool {
+	t.Helper()
+
+	var count int
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`,
+		table,
+	).Scan(&count); err != nil {
+		t.Fatalf("check table %s existence: %v", table, err)
+	}
+	return count == 1
+}
+
+func indexExists(t *testing.T, db *sql.DB, index string) bool {
+	t.Helper()
+
+	var count int
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?`,
+		index,
+	).Scan(&count); err != nil {
+		t.Fatalf("check index %s existence: %v", index, err)
+	}
+	return count == 1
+}
