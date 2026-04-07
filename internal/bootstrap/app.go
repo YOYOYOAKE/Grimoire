@@ -14,6 +14,8 @@ import (
 	drawapp "grimoire/internal/app/draw"
 	preferencesapp "grimoire/internal/app/preferences"
 	"grimoire/internal/config"
+	platformclock "grimoire/internal/platform/clock"
+	platformid "grimoire/internal/platform/id"
 )
 
 const workerConcurrency = 1 // NAI rejects concurrent jobs, so draw tasks must be processed serially.
@@ -23,9 +25,15 @@ type App struct {
 	worker      *memoryqueue.Worker
 	logger      *slog.Logger
 	adminChatID int64
+	wiring      reservedWiring
 }
 
 func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, error) {
+	wiring, err := resolveReservedWiring(cfg, configPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve bootstrap wiring: %w", err)
+	}
+
 	taskRepo := memoryrepo.NewTaskRepository()
 	preferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
 	if err != nil {
@@ -34,6 +42,8 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 
 	telegramBot := telegram.NewBot(cfg, logger)
 	preferenceService := preferencesapp.NewService(preferenceRepo)
+	systemClock := platformclock.NewSystemClock()
+	idGenerator := platformid.NewUUIDGenerator()
 	imageGenerator, err := nai.NewClient(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("init official nai client: %w", err)
@@ -44,8 +54,8 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		openai.NewFailoverClient(cfg.LLMs, logger),
 		imageGenerator,
 		telegramBot,
-		nil,
-		func() string { return memoryrepo.NewTaskID() },
+		systemClock.Now,
+		idGenerator.NewString,
 		logger,
 	)
 
@@ -65,11 +75,19 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		worker:      worker,
 		logger:      logger,
 		adminChatID: cfg.Telegram.AdminUserID,
+		wiring:      wiring,
 	}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
 	a.worker.Start(ctx)
+	a.logger.Info(
+		"reserved runtime wiring prepared",
+		"database_path", a.wiring.StorageLayout.DatabasePath,
+		"image_dir", a.wiring.StorageLayout.ImageDir,
+		"recovery_enabled", a.wiring.RecoveryEnabled,
+		"conversation_recent_message_limit", a.wiring.ConversationMessageLimit,
+	)
 	a.logger.Info("grimoire v2 started")
 	if _, err := a.bot.SendText(ctx, a.adminChatID, 0, "Grimoire v2 已启动"); err != nil && a.logger != nil {
 		a.logger.Warn("send startup notification failed", "chat_id", a.adminChatID, "error", err)

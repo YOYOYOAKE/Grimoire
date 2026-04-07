@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	platformdb "grimoire/internal/platform/db"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -41,6 +43,10 @@ func normalize(cfg Config) Config {
 	cfg.Telegram.BotToken = strings.TrimSpace(cfg.Telegram.BotToken)
 	cfg.Telegram.Proxy = strings.TrimSpace(cfg.Telegram.Proxy)
 	cfg.Telegram.TimeoutSec = defaultInt(cfg.Telegram.TimeoutSec, 60)
+	cfg.Storage.DataDir = strings.TrimSpace(cfg.Storage.DataDir)
+	cfg.Storage.SQLitePath = strings.TrimSpace(cfg.Storage.SQLitePath)
+	cfg.Storage.ImageDir = strings.TrimSpace(cfg.Storage.ImageDir)
+	cfg.Conversation.RecentMessageLimit = defaultZeroInt(cfg.Conversation.RecentMessageLimit, 15)
 
 	for i, llm := range cfg.LLMs {
 		normalizeProvider(&llm.BaseURL, &llm.APIKey, &llm.Model, &llm.Proxy, true, &llm.TimeoutSec, 180)
@@ -65,6 +71,17 @@ func defaultInt(value int, fallback int) int {
 		return value
 	}
 	return fallback
+}
+
+func defaultZeroInt(value int, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func (cfg Config) ResolveSQLiteLayout(configPath string) (platformdb.SQLiteLayout, error) {
+	return platformdb.ResolveSQLiteLayout(configPath, cfg.Storage.DataDir, cfg.Storage.SQLitePath, cfg.Storage.ImageDir)
 }
 
 func ResolveStartupPath(args []string) (string, bool, error) {
@@ -103,6 +120,17 @@ func DefaultTemplate() string {
   admin_user_id: 123456789
   proxy: ""
   timeout_sec: 60
+
+storage:
+  data_dir: ""
+  sqlite_path: ""
+  image_dir: ""
+
+conversation:
+  recent_message_limit: 15
+
+recovery:
+  enabled: true
 
 llms:
   - base_url: "https://api.openai.com/v1"

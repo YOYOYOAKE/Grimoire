@@ -16,6 +16,9 @@ func validate(cfg Config) error {
 	if err := validateOptionalURL("telegram.proxy", cfg.Telegram.Proxy); err != nil {
 		return err
 	}
+	if cfg.Conversation.RecentMessageLimit <= 0 {
+		return fmt.Errorf("conversation.recent_message_limit must be > 0")
+	}
 	if len(cfg.LLMs) == 0 {
 		return fmt.Errorf("llms must contain at least one entry")
 	}
