@@ -141,6 +141,8 @@ func TestPortStubsSatisfyContracts(t *testing.T) {
 	var _ taskapp.TaskRepository = taskRepositoryStub{}
 	var _ taskapp.TxRunner = txRunnerStub{}
 	var _ taskapp.Scheduler = schedulerStub{}
+	var _ runnerapp.TaskRepository = taskRepositoryStub{}
+	var _ runnerapp.TxRunner = txRunnerStub{}
 	var _ conversationapp.ConversationModel = conversationModelStub{}
 	var _ requestapp.RequestGenerator = requestGeneratorStub{}
 	var _ runnerapp.PromptTranslator = promptTranslatorStub{}

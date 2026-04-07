@@ -4,7 +4,17 @@ import (
 	"context"
 
 	domaindraw "grimoire/internal/domain/draw"
+	domaintask "grimoire/internal/domain/task"
 )
+
+type TaskRepository interface {
+	Get(ctx context.Context, id string) (domaintask.Task, error)
+	Update(ctx context.Context, task domaintask.Task) error
+}
+
+type TxRunner interface {
+	WithinTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
 
 type PromptTranslator interface {
 	Translate(ctx context.Context, request string, shape domaindraw.Shape) (domaindraw.Translation, error)
