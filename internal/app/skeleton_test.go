@@ -27,7 +27,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if conversationapp.NewService(nil, nil, nil, nil, 15, nil, nil) == nil {
 		t.Fatal("expected conversation service")
 	}
-	if requestapp.NewService(nil) == nil {
+	if requestapp.NewService(nil, nil, nil, 15) == nil {
 		t.Fatal("expected request service")
 	}
 	if taskapp.NewService(nil, nil, nil) == nil {
