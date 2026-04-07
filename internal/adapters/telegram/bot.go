@@ -132,6 +132,11 @@ func (b *Bot) EditText(ctx context.Context, chatID int64, messageID int64, text 
 }
 
 func (b *Bot) SendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error {
+	_, err := b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content)
+	return err
+}
+
+func (b *Bot) SendPhotoMessage(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) (int64, error) {
 	return b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content)
 }
 

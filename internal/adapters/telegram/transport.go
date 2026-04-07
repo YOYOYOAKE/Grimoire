@@ -122,7 +122,7 @@ func (b *Bot) editMessage(ctx context.Context, chatID int64, messageID int64, te
 	return err
 }
 
-func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error {
+func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) (int64, error) {
 	endpoint := fmt.Sprintf("%s/bot%s/sendPhoto", apiBase, b.cfg.Telegram.BotToken)
 	payload := map[string]any{
 		"chat_id": chatID,
@@ -135,9 +135,15 @@ func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int6
 	}
 	req, err := newMultipartPhotoRequest(ctx, endpoint, payload, filename, content)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return b.doAPIRequest(req, nil)
+	var response struct {
+		Result Message `json:"result"`
+	}
+	if err := b.doAPIRequest(req, &response); err != nil {
+		return 0, err
+	}
+	return response.Result.MessageID, nil
 }
 
 func (b *Bot) deleteMessage(ctx context.Context, chatID int64, messageID int64) error {

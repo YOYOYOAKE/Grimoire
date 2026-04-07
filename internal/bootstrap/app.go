@@ -7,14 +7,18 @@ import (
 	"log/slog"
 	"strconv"
 
+	localstore "grimoire/internal/adapters/filestore/local"
 	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
 	memoryqueue "grimoire/internal/adapters/queue/memory"
 	memoryrepo "grimoire/internal/adapters/repository/memory"
 	runtimerepo "grimoire/internal/adapters/repository/runtime"
+	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	"grimoire/internal/adapters/telegram"
 	drawapp "grimoire/internal/app/draw"
 	preferencesapp "grimoire/internal/app/preferences"
+	recoveryapp "grimoire/internal/app/recovery"
+	runnerapp "grimoire/internal/app/runner"
 	"grimoire/internal/config"
 	platformclock "grimoire/internal/platform/clock"
 	platformid "grimoire/internal/platform/id"
@@ -22,13 +26,23 @@ import (
 
 const workerConcurrency = 1 // NAI rejects concurrent jobs, so draw tasks must be processed serially.
 
+type workerStarter interface {
+	Start(ctx context.Context)
+}
+
+type recoveryExecutor interface {
+	Recover(ctx context.Context, command recoveryapp.RecoverCommand) (recoveryapp.RecoverResult, error)
+}
+
 type App struct {
-	bot         *telegram.Bot
-	worker      *memoryqueue.Worker
-	database    *sql.DB
-	logger      *slog.Logger
-	adminChatID int64
-	wiring      reservedWiring
+	bot          *telegram.Bot
+	worker       workerStarter
+	runnerWorker workerStarter
+	recovery     recoveryExecutor
+	database     *sql.DB
+	logger       *slog.Logger
+	adminChatID  int64
+	wiring       reservedWiring
 }
 
 func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, error) {
@@ -57,6 +71,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	preferenceService := preferencesapp.NewService(preferenceRepo, adminTelegramID)
 	systemClock := platformclock.NewSystemClock()
 	idGenerator := platformid.NewUUIDGenerator()
+	translateClient := openai.NewTranslateFailoverClient(cfg.LLMs, logger)
 	imageGenerator, err := nai.NewClient(cfg, logger)
 	if err != nil {
 		return nil, fmt.Errorf("init official nai client: %w", err)
@@ -64,7 +79,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	drawService := drawapp.NewService(
 		taskRepo,
 		runtimePreferenceRepo,
-		openai.NewTranslateFailoverClient(cfg.LLMs, logger),
+		translateClient,
 		imageGenerator,
 		telegramBot,
 		systemClock.Now,
@@ -79,17 +94,44 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	}, logger)
 
 	drawService.SetScheduler(worker)
+
+	sqliteTaskRepo := sqliterepo.NewTaskRepository(db)
+	sqliteTxRunner := sqliterepo.NewTxRunner(db)
+	imageStore, err := localstore.NewImageStore(wiring.StorageLayout)
+	if err != nil {
+		return nil, fmt.Errorf("init local image store: %w", err)
+	}
+	runnerNotifier := newBootstrapRunnerNotifier(telegramBot, wiring.StorageLayout.RootDir)
+	runnerService := runnerapp.NewService(
+		sqliteTaskRepo,
+		sqliteTxRunner,
+		translateClient,
+		imageGenerator,
+		imageStore,
+		runnerNotifier,
+		systemClock.Now,
+	)
+	runnerWorker := memoryqueue.NewWorker(workerConcurrency, func(ctx context.Context, taskID string) {
+		if err := runnerService.Run(ctx, runnerapp.RunCommand{TaskID: taskID}); err != nil {
+			logger.Error("run task failed", "task_id", taskID, "error", err)
+		}
+	}, logger)
+	runnerScheduler := memoryqueue.NewScheduler(runnerWorker)
+	recoveryService := recoveryapp.NewService(sqliteTaskRepo, runnerScheduler)
+
 	telegramBot.SetDrawService(drawService)
 	telegramBot.SetPreferenceService(preferenceService)
 	telegramBot.SetBalanceService(imageGenerator)
 
 	return &App{
-		bot:         telegramBot,
-		database:    db,
-		worker:      worker,
-		logger:      logger,
-		adminChatID: cfg.Telegram.AdminUserID,
-		wiring:      wiring,
+		bot:          telegramBot,
+		worker:       worker,
+		runnerWorker: runnerWorker,
+		recovery:     recoveryService,
+		database:     db,
+		logger:       logger,
+		adminChatID:  cfg.Telegram.AdminUserID,
+		wiring:       wiring,
 	}, nil
 }
 
@@ -103,7 +145,9 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}()
 
-	a.worker.Start(ctx)
+	if err := a.startBackgroundServices(ctx); err != nil {
+		return err
+	}
 	a.logger.Info(
 		"reserved runtime wiring prepared",
 		"database_path", a.wiring.StorageLayout.DatabasePath,
@@ -117,4 +161,25 @@ func (a *App) Run(ctx context.Context) error {
 	}
 	defer a.logger.Info("grimoire v2 stopped")
 	return a.bot.Run(ctx)
+}
+
+func (a *App) startBackgroundServices(ctx context.Context) error {
+	if a.worker != nil {
+		a.worker.Start(ctx)
+	}
+	if a.runnerWorker != nil {
+		a.runnerWorker.Start(ctx)
+	}
+	if !a.wiring.RecoveryEnabled || a.recovery == nil {
+		return nil
+	}
+
+	result, err := a.recovery.Recover(ctx, recoveryapp.RecoverCommand{})
+	if err != nil {
+		return fmt.Errorf("run recovery: %w", err)
+	}
+	if a.logger != nil {
+		a.logger.Info("recovery completed", "requeued_tasks", result.RequeuedTaskIDs)
+	}
+	return nil
 }
