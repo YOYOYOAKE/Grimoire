@@ -6,6 +6,7 @@ import (
 
 	accessapp "grimoire/internal/app/access"
 	conversationapp "grimoire/internal/app/conversation"
+	recoveryapp "grimoire/internal/app/recovery"
 	requestapp "grimoire/internal/app/request"
 	runnerapp "grimoire/internal/app/runner"
 	sessionapp "grimoire/internal/app/session"
@@ -143,6 +144,8 @@ func TestPortStubsSatisfyContracts(t *testing.T) {
 	var _ taskapp.Scheduler = schedulerStub{}
 	var _ runnerapp.TaskRepository = taskRepositoryStub{}
 	var _ runnerapp.TxRunner = txRunnerStub{}
+	var _ recoveryapp.TaskRepository = taskRepositoryStub{}
+	var _ recoveryapp.Scheduler = schedulerStub{}
 	var _ conversationapp.ConversationModel = conversationModelStub{}
 	var _ requestapp.RequestGenerator = requestGeneratorStub{}
 	var _ runnerapp.PromptTranslator = promptTranslatorStub{}
