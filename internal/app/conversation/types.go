@@ -6,8 +6,7 @@ import (
 )
 
 type ConverseCommand struct {
-	Summary    domainsession.Summary
-	Messages   []domainsession.Message
+	SessionID  string
 	Preference domainpreferences.Preference
 }
 

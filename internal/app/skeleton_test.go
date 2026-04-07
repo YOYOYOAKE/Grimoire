@@ -24,7 +24,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if sessionapp.NewService(nil, nil, nil) == nil {
 		t.Fatal("expected session service")
 	}
-	if conversationapp.NewService(nil) == nil {
+	if conversationapp.NewService(nil, nil, nil, nil, 15, nil, nil) == nil {
 		t.Fatal("expected conversation service")
 	}
 	if requestapp.NewService(nil) == nil {
