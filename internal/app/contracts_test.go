@@ -28,6 +28,10 @@ func (sessionRepositoryStub) GetOrCreateActiveByUserID(context.Context, string) 
 	return domainsession.Session{}, nil
 }
 
+func (sessionRepositoryStub) Get(context.Context, string) (domainsession.Session, error) {
+	return domainsession.Session{}, nil
+}
+
 func (sessionRepositoryStub) Save(context.Context, domainsession.Session) error {
 	return nil
 }
@@ -128,6 +132,7 @@ func TestPortStubsSatisfyContracts(t *testing.T) {
 	var _ accessapp.UserRepository = userRepositoryStub{}
 	var _ sessionapp.SessionRepository = sessionRepositoryStub{}
 	var _ sessionapp.SessionMessageRepository = sessionMessageRepositoryStub{}
+	var _ sessionapp.TxRunner = txRunnerStub{}
 	var _ taskapp.TaskRepository = taskRepositoryStub{}
 	var _ taskapp.TxRunner = txRunnerStub{}
 	var _ taskapp.Scheduler = schedulerStub{}

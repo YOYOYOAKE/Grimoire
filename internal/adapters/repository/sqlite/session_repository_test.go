@@ -87,6 +87,32 @@ func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
 	}
 }
 
+func TestSessionRepositoryGetLoadsSessionByID(t *testing.T) {
+	db := openMigratedTestDB(t)
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-unused"))
+	createSessionUser(t, db, "user-1")
+
+	session, err := domainsession.New("session-1", "user-1")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+	session.UpdateSummary(domainsession.NewSummary(`{"topic":"moon"}`))
+	if err := repository.Save(context.Background(), session); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	got, err := repository.Get(context.Background(), "session-1")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if got.UserID != "user-1" {
+		t.Fatalf("unexpected user id: %s", got.UserID)
+	}
+	if got.Summary.Content() != `{"topic":"moon"}` {
+		t.Fatalf("unexpected summary: %q", got.Summary.Content())
+	}
+}
+
 func TestSessionRepositoryGetOrCreateActiveByUserIDDoesNotRequireGeneratorForExistingSession(t *testing.T) {
 	db := openMigratedTestDB(t)
 	createSessionUser(t, db, "user-1")
@@ -163,6 +189,15 @@ func TestSessionRepositoryGetOrCreateActiveByUserIDRejectsBlankUserID(t *testing
 	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
 
 	if _, err := repository.GetOrCreateActiveByUserID(context.Background(), "   "); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestSessionRepositoryGetRejectsBlankSessionID(t *testing.T) {
+	db := openMigratedTestDB(t)
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
+
+	if _, err := repository.Get(context.Background(), "   "); err == nil {
 		t.Fatal("expected error")
 	}
 }

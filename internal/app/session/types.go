@@ -1,6 +1,10 @@
 package session
 
-import domainsession "grimoire/internal/domain/session"
+import (
+	"time"
+
+	domainsession "grimoire/internal/domain/session"
+)
 
 type GetOrCreateCommand struct {
 	UserID string
@@ -8,7 +12,24 @@ type GetOrCreateCommand struct {
 
 type AppendMessageCommand struct {
 	SessionID string
-	Message   domainsession.Message
+	MessageID string
+	Content   string
+	CreatedAt time.Time
+}
+
+type UpdateSummaryCommand struct {
+	SessionID string
+	Summary   domainsession.Summary
+}
+
+type ListRecentMessagesCommand struct {
+	SessionID string
+	Limit     int
+}
+
+type AppendMessageResult struct {
+	Session domainsession.Session
+	Message domainsession.Message
 }
 
 type RecentMessagesResult struct {

@@ -21,7 +21,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if chatapp.NewService() == nil {
 		t.Fatal("expected chat service")
 	}
-	if sessionapp.NewService(nil, nil) == nil {
+	if sessionapp.NewService(nil, nil, nil) == nil {
 		t.Fatal("expected session service")
 	}
 	if conversationapp.NewService(nil) == nil {

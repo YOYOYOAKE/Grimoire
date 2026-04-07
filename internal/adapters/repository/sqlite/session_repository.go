@@ -99,13 +99,30 @@ func (r *SessionRepository) Save(ctx context.Context, session domainsession.Sess
 	return nil
 }
 
+func (r *SessionRepository) Get(ctx context.Context, sessionID string) (domainsession.Session, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return domainsession.Session{}, fmt.Errorf("session id is required")
+	}
+
+	row := ConnFromContext(ctx, r.db).QueryRowContext(
+		ctx,
+		`SELECT id, user_id, length, summary FROM sessions WHERE id = ?`,
+		sessionID,
+	)
+	return scanSession(row)
+}
+
 func (r *SessionRepository) getByUserID(ctx context.Context, userID string) (domainsession.Session, error) {
 	row := ConnFromContext(ctx, r.db).QueryRowContext(
 		ctx,
 		`SELECT id, user_id, length, summary FROM sessions WHERE user_id = ?`,
 		userID,
 	)
+	return scanSession(row)
+}
 
+func scanSession(row *sql.Row) (domainsession.Session, error) {
 	var record sessionRecord
 	if err := row.Scan(&record.ID, &record.UserID, &record.Length, &record.Summary); err != nil {
 		return domainsession.Session{}, err
