@@ -19,9 +19,9 @@ type Worker struct {
 }
 
 func NewWorker(concurrency int, handler HandlerFunc, logger *slog.Logger) *Worker {
-	if concurrency <= 0 {
-		concurrency = 1
-	}
+	// NAI requests must stay serialized, so the in-memory worker keeps a single consumer
+	// even if callers accidentally pass a higher concurrency.
+	concurrency = 1
 	worker := &Worker{
 		jobs:        make(chan string, 1024),
 		handler:     handler,
