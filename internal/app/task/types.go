@@ -9,6 +9,14 @@ type CreateCommand struct {
 	Context   domaintask.Context
 }
 
+type StopCommand struct {
+	TaskID string
+}
+
+type RetryCommand struct {
+	TaskID string
+}
+
 type TaskView struct {
 	TaskID string
 	Status domaintask.Status

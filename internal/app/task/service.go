@@ -48,6 +48,90 @@ func NewService(
 }
 
 func (s *Service) Create(ctx context.Context, command CreateCommand) (domaintask.Task, error) {
+	return s.createAndEnqueue(ctx, func(context.Context) (domaintask.Task, error) {
+		return domaintask.New(
+			s.idGenerator(),
+			command.UserID,
+			command.SessionID,
+			command.Request,
+			command.Context,
+			s.now(),
+		)
+	})
+}
+
+func (s *Service) Stop(ctx context.Context, command StopCommand) (domaintask.Task, error) {
+	if s.txRunner == nil {
+		return domaintask.Task{}, ErrTxRunnerRequired
+	}
+
+	var stopped domaintask.Task
+	err := s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
+		task, err := s.Get(txCtx, command.TaskID)
+		if err != nil {
+			return err
+		}
+		if task.Status == domaintask.StatusStopped {
+			stopped = task
+			return nil
+		}
+		if err := task.MarkStopped(s.now()); err != nil {
+			return err
+		}
+		if err := s.tasks.Update(txCtx, task); err != nil {
+			return err
+		}
+		stopped = task
+		return nil
+	})
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return stopped, nil
+}
+
+func (s *Service) RetryTranslate(ctx context.Context, command RetryCommand) (domaintask.Task, error) {
+	return s.retry(ctx, command.TaskID, false)
+}
+
+func (s *Service) RetryDraw(ctx context.Context, command RetryCommand) (domaintask.Task, error) {
+	return s.retry(ctx, command.TaskID, true)
+}
+
+func (s *Service) retry(ctx context.Context, taskID string, reusePrompt bool) (domaintask.Task, error) {
+	return s.createAndEnqueue(ctx, func(txCtx context.Context) (domaintask.Task, error) {
+		source, err := s.Get(txCtx, taskID)
+		if err != nil {
+			return domaintask.Task{}, err
+		}
+
+		task, err := domaintask.New(
+			s.idGenerator(),
+			source.UserID,
+			source.SessionID,
+			source.Request,
+			source.Context,
+			s.now(),
+		)
+		if err != nil {
+			return domaintask.Task{}, err
+		}
+		if err := task.SetSourceTask(source.ID); err != nil {
+			return domaintask.Task{}, err
+		}
+		if reusePrompt {
+			if err := task.SetPrompt(source.Prompt); err != nil {
+				return domaintask.Task{}, err
+			}
+		}
+		return task, nil
+	})
+}
+
+func (s *Service) createAndEnqueue(
+	ctx context.Context,
+	build func(txCtx context.Context) (domaintask.Task, error),
+) (domaintask.Task, error) {
 	if s.txRunner == nil {
 		return domaintask.Task{}, ErrTxRunnerRequired
 	}
@@ -57,14 +141,7 @@ func (s *Service) Create(ctx context.Context, command CreateCommand) (domaintask
 
 	var created domaintask.Task
 	err := s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
-		task, err := domaintask.New(
-			s.idGenerator(),
-			command.UserID,
-			command.SessionID,
-			command.Request,
-			command.Context,
-			s.now(),
-		)
+		task, err := build(txCtx)
 		if err != nil {
 			return err
 		}
