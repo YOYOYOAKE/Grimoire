@@ -224,7 +224,7 @@ func TestStoppedTaskRejectsFurtherTransition(t *testing.T) {
 }
 
 func TestUpdateTaskRequiresTxRunner(t *testing.T) {
-	service := NewService(nil, nil, nil, nil, nil, nil, nil)
+	service := NewService(&runnerTaskRepositoryStub{}, nil, nil, nil, nil, nil, nil)
 
 	_, err := service.StartTranslating(context.Background(), RunCommand{TaskID: "task-1"})
 	if !errors.Is(err, ErrTxRunnerRequired) {
