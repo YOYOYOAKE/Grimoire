@@ -1,7 +1,9 @@
 package request
 
-type Service struct{}
+type Service struct {
+	generator RequestGenerator
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(generator RequestGenerator) *Service {
+	return &Service{generator: generator}
 }

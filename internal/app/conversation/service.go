@@ -1,7 +1,9 @@
 package conversation
 
-type Service struct{}
+type Service struct {
+	model ConversationModel
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(model ConversationModel) *Service {
+	return &Service{model: model}
 }

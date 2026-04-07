@@ -24,16 +24,16 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if sessionapp.NewService(nil, nil) == nil {
 		t.Fatal("expected session service")
 	}
-	if conversationapp.NewService() == nil {
+	if conversationapp.NewService(nil) == nil {
 		t.Fatal("expected conversation service")
 	}
-	if requestapp.NewService() == nil {
+	if requestapp.NewService(nil) == nil {
 		t.Fatal("expected request service")
 	}
-	if taskapp.NewService(nil, nil) == nil {
+	if taskapp.NewService(nil, nil, nil) == nil {
 		t.Fatal("expected task service")
 	}
-	if runnerapp.NewService() == nil {
+	if runnerapp.NewService(nil, nil, nil, nil) == nil {
 		t.Fatal("expected runner service")
 	}
 	if recoveryapp.NewService() == nil {

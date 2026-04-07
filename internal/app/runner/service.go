@@ -1,7 +1,22 @@
 package runner
 
-type Service struct{}
+type Service struct {
+	translator PromptTranslator
+	generator  ImageGenerator
+	imageStore ImageStore
+	notifier   Notifier
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(
+	translator PromptTranslator,
+	generator ImageGenerator,
+	imageStore ImageStore,
+	notifier Notifier,
+) *Service {
+	return &Service{
+		translator: translator,
+		generator:  generator,
+		imageStore: imageStore,
+		notifier:   notifier,
+	}
 }

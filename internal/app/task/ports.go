@@ -17,3 +17,7 @@ type TaskRepository interface {
 type TxRunner interface {
 	WithinTx(ctx context.Context, fn func(ctx context.Context) error) error
 }
+
+type Scheduler interface {
+	Enqueue(taskID string) error
+}
