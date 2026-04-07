@@ -51,7 +51,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	drawService := drawapp.NewService(
 		taskRepo,
 		preferenceRepo,
-		openai.NewFailoverClient(cfg.LLMs, logger),
+		openai.NewTranslateFailoverClient(cfg.LLMs, logger),
 		imageGenerator,
 		telegramBot,
 		systemClock.Now,

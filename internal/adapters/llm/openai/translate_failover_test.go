@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
 )
 
@@ -44,6 +45,33 @@ func (s *translateStub) baseURL() string {
 	return s.baseURLRaw
 }
 
+func TestNewTranslateFailoverClientBuildsProvidersFromConfigs(t *testing.T) {
+	client := NewTranslateFailoverClient([]config.LLM{
+		{BaseURL: "https://first.example/v1", Model: "first", TimeoutSec: 5},
+		{BaseURL: "https://second.example/v1", Model: "second", TimeoutSec: 7},
+	}, nil)
+
+	if len(client.clients) != 2 {
+		t.Fatalf("expected two providers, got %d", len(client.clients))
+	}
+
+	first, ok := client.clients[0].(*TranslateClient)
+	if !ok {
+		t.Fatalf("expected first provider to be *TranslateClient, got %T", client.clients[0])
+	}
+	second, ok := client.clients[1].(*TranslateClient)
+	if !ok {
+		t.Fatalf("expected second provider to be *TranslateClient, got %T", client.clients[1])
+	}
+
+	if first.cfg.BaseURL != "https://first.example/v1" || first.cfg.Model != "first" {
+		t.Fatalf("unexpected first provider config: %#v", first.cfg)
+	}
+	if second.cfg.BaseURL != "https://second.example/v1" || second.cfg.Model != "second" {
+		t.Fatalf("unexpected second provider config: %#v", second.cfg)
+	}
+}
+
 func TestFailoverClientReturnsFirstSuccessWithoutFallback(t *testing.T) {
 	first := &translateStub{
 		modelName:  "first",
@@ -65,7 +93,7 @@ func TestFailoverClientReturnsFirstSuccessWithoutFallback(t *testing.T) {
 		},
 	}
 
-	client := newFailoverClient([]translateClient{first, second}, nil)
+	client := newTranslateFailoverClient([]translateProvider{first, second}, nil)
 	translation, err := client.Translate(context.Background(), "moon", domaindraw.ShapeSquare)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
@@ -104,7 +132,7 @@ func TestFailoverClientRetriesThenFallsBack(t *testing.T) {
 		},
 	}
 
-	client := newFailoverClient([]translateClient{first, second}, nil)
+	client := newTranslateFailoverClient([]translateProvider{first, second}, nil)
 	translation, err := client.Translate(context.Background(), "moon", domaindraw.ShapeSquare)
 	if err != nil {
 		t.Fatalf("translate: %v", err)
@@ -140,7 +168,7 @@ func TestFailoverClientReturnsAggregateErrorAfterAllProvidersFail(t *testing.T) 
 		},
 	}
 
-	client := newFailoverClient([]translateClient{first, second}, nil)
+	client := newTranslateFailoverClient([]translateProvider{first, second}, nil)
 	_, err := client.Translate(context.Background(), "moon", domaindraw.ShapeSquare)
 	if err == nil {
 		t.Fatal("expected error")
@@ -168,7 +196,7 @@ func TestFailoverClientStopsWhenParentContextIsCanceled(t *testing.T) {
 		},
 	}
 
-	client := newFailoverClient([]translateClient{first, second}, nil)
+	client := newTranslateFailoverClient([]translateProvider{first, second}, nil)
 	_, err := client.Translate(ctx, "moon", domaindraw.ShapeSquare)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled, got %v", err)
@@ -202,8 +230,8 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 		},
 	}
 
-	client := newFailoverClient(
-		[]translateClient{first, second},
+	client := newTranslateFailoverClient(
+		[]translateProvider{first, second},
 		slog.New(slog.NewTextHandler(logBuffer, nil)),
 	)
 

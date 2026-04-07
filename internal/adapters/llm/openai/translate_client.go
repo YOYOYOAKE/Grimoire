@@ -19,18 +19,18 @@ import (
 	"grimoire/internal/platform/httpclient"
 )
 
-type Client struct {
+type TranslateClient struct {
 	cfg        config.LLM
 	httpClient *http.Client
 	logger     *slog.Logger
 }
 
-type FailoverClient struct {
-	clients []translateClient
+type TranslateFailoverClient struct {
+	clients []translateProvider
 	logger  *slog.Logger
 }
 
-type translateClient interface {
+type translateProvider interface {
 	translate(ctx context.Context, prompt string, shape domaindraw.Shape) (translationResult, error)
 	model() string
 	baseURL() string
@@ -49,38 +49,38 @@ const (
 	llmResponseModePlaintext = "plaintext"
 )
 
-//go:embed system_prompt.md
-var systemPromptFile string
+//go:embed translate_system_prompt.md
+var translateSystemPromptFile string
 
-var systemPrompt = strings.TrimSpace(systemPromptFile)
+var translateSystemPrompt = strings.TrimSpace(translateSystemPromptFile)
 
-func NewClient(cfg config.LLM, logger *slog.Logger) *Client {
-	return &Client{
+func NewTranslateClient(cfg config.LLM, logger *slog.Logger) *TranslateClient {
+	return &TranslateClient{
 		cfg:        cfg,
 		httpClient: httpclient.New(cfg.TimeoutSec, cfg.Proxy, logger, "llm"),
 		logger:     logger,
 	}
 }
 
-func NewFailoverClient(cfgs []config.LLM, logger *slog.Logger) *FailoverClient {
-	clients := make([]translateClient, 0, len(cfgs))
+func NewTranslateFailoverClient(cfgs []config.LLM, logger *slog.Logger) *TranslateFailoverClient {
+	clients := make([]translateProvider, 0, len(cfgs))
 	for _, cfg := range cfgs {
-		clients = append(clients, NewClient(cfg, logger))
+		clients = append(clients, NewTranslateClient(cfg, logger))
 	}
-	return newFailoverClient(clients, logger)
+	return newTranslateFailoverClient(clients, logger)
 }
 
-func newFailoverClient(clients []translateClient, logger *slog.Logger) *FailoverClient {
+func newTranslateFailoverClient(clients []translateProvider, logger *slog.Logger) *TranslateFailoverClient {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &FailoverClient{
+	return &TranslateFailoverClient{
 		clients: clients,
 		logger:  logger,
 	}
 }
 
-func (c *Client) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
+func (c *TranslateClient) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
 	logTranslateRequest(c.logger, c.cfg.BaseURL, c.cfg.Model, 1, shape)
 	result, err := c.translate(ctx, prompt, shape)
 	if err != nil {
@@ -90,14 +90,14 @@ func (c *Client) Translate(ctx context.Context, prompt string, shape domaindraw.
 	return result.Translation, nil
 }
 
-func (c *Client) translate(ctx context.Context, prompt string, shape domaindraw.Shape) (translationResult, error) {
+func (c *TranslateClient) translate(ctx context.Context, prompt string, shape domaindraw.Shape) (translationResult, error) {
 	requestCtx, cancel := context.WithTimeout(ctx, time.Duration(c.cfg.TimeoutSec)*time.Second)
 	defer cancel()
 
 	body := map[string]any{
 		"model": c.cfg.Model,
 		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
+			{"role": "system", "content": translateSystemPrompt},
 			{"role": "user", "content": fmt.Sprintf("shape=%s\nrequest=%s", shape, strings.TrimSpace(prompt))},
 		},
 		"temperature": 0.2,
@@ -156,15 +156,15 @@ func (c *Client) translate(ctx context.Context, prompt string, shape domaindraw.
 	}, nil
 }
 
-func (c *Client) model() string {
+func (c *TranslateClient) model() string {
 	return c.cfg.Model
 }
 
-func (c *Client) baseURL() string {
+func (c *TranslateClient) baseURL() string {
 	return c.cfg.BaseURL
 }
 
-func (c *FailoverClient) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
+func (c *TranslateFailoverClient) Translate(ctx context.Context, prompt string, shape domaindraw.Shape) (domaindraw.Translation, error) {
 	if len(c.clients) == 0 {
 		return domaindraw.Translation{}, fmt.Errorf("no llm providers configured")
 	}
@@ -653,7 +653,7 @@ func decodeContentField(raw json.RawMessage) (string, bool) {
 	return "", false
 }
 
-func (c *Client) logFailure(message string, shape domaindraw.Shape, err error, rawResponse string, assistantContent string) {
+func (c *TranslateClient) logFailure(message string, shape domaindraw.Shape, err error, rawResponse string, assistantContent string) {
 	if c.logger == nil {
 		return
 	}

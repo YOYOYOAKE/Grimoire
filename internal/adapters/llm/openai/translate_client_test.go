@@ -415,10 +415,10 @@ func TestTranslateLogsRawResponseOnUnsupportedFormat(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *Client {
+func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *TranslateClient {
 	t.Helper()
 
-	return &Client{
+	return &TranslateClient{
 		cfg: config.LLM{
 			BaseURL:    "https://api.openai.com/v1",
 			APIKey:     "key",
