@@ -130,6 +130,181 @@ func TestMarkFailedRejectsInvalidTaskError(t *testing.T) {
 	}
 }
 
+func TestRestoreCompletedTask(t *testing.T) {
+	context, err := NewContext(`{"version":1}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+	timeline := mustNewTimeline(t, time.Unix(1, 0))
+	if err := timeline.MarkTranslating(time.Unix(2, 0)); err != nil {
+		t.Fatalf("mark translating: %v", err)
+	}
+	if err := timeline.MarkDrawing(time.Unix(3, 0)); err != nil {
+		t.Fatalf("mark drawing: %v", err)
+	}
+	if err := timeline.MarkCompleted(time.Unix(4, 0)); err != nil {
+		t.Fatalf("mark completed: %v", err)
+	}
+
+	task, err := Restore(
+		"task-1",
+		"user-1",
+		"session-1",
+		"task-0",
+		"draw a cat",
+		"masterpiece, cat",
+		"data/images/user-1/task-1.jpg",
+		StatusCompleted,
+		nil,
+		timeline,
+		context,
+		"100",
+		"200",
+	)
+	if err != nil {
+		t.Fatalf("restore task: %v", err)
+	}
+
+	if task.Status != StatusCompleted {
+		t.Fatalf("unexpected status: %s", task.Status)
+	}
+	if task.SourceTaskID != "task-0" {
+		t.Fatalf("unexpected source task: %s", task.SourceTaskID)
+	}
+	if task.Image == "" || task.Prompt == "" {
+		t.Fatal("expected restored prompt and image")
+	}
+}
+
+func TestRestoreFailedTaskRequiresError(t *testing.T) {
+	context, err := NewContext(`{"version":1}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+	timeline := mustNewTimeline(t, time.Unix(1, 0))
+	if err := timeline.MarkFailed(time.Unix(2, 0)); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+
+	if _, err := Restore(
+		"task-1",
+		"user-1",
+		"session-1",
+		"",
+		"draw a cat",
+		"",
+		"",
+		StatusFailed,
+		nil,
+		timeline,
+		context,
+		"",
+		"",
+	); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRestoreQueuedTaskRejectsTransitionTimeline(t *testing.T) {
+	context, err := NewContext(`{"version":1}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+	timeline := mustNewTimeline(t, time.Unix(1, 0))
+	if err := timeline.MarkTranslating(time.Unix(2, 0)); err != nil {
+		t.Fatalf("mark translating: %v", err)
+	}
+
+	if _, err := Restore(
+		"task-1",
+		"user-1",
+		"session-1",
+		"",
+		"draw a cat",
+		"",
+		"",
+		StatusQueued,
+		nil,
+		timeline,
+		context,
+		"",
+		"",
+	); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRestoreFailedTaskRejectsDrawingWithoutTranslating(t *testing.T) {
+	context, err := NewContext(`{"version":1}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+	timeline := mustNewTimeline(t, time.Unix(1, 0))
+	if err := timeline.MarkDrawing(time.Unix(3, 0)); err != nil {
+		t.Fatalf("mark drawing: %v", err)
+	}
+	if err := timeline.MarkFailed(time.Unix(4, 0)); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	taskError, err := NewError("DRAW_FAILED", "drawing", "draw failed")
+	if err != nil {
+		t.Fatalf("new error: %v", err)
+	}
+
+	if _, err := Restore(
+		"task-1",
+		"user-1",
+		"session-1",
+		"",
+		"draw a cat",
+		"masterpiece, cat",
+		"",
+		StatusFailed,
+		&taskError,
+		timeline,
+		context,
+		"",
+		"",
+	); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestRestoreStoppedTaskRejectsMissingPromptAfterDrawing(t *testing.T) {
+	context, err := NewContext(`{"version":1}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+	timeline := mustNewTimeline(t, time.Unix(1, 0))
+	if err := timeline.MarkTranslating(time.Unix(2, 0)); err != nil {
+		t.Fatalf("mark translating: %v", err)
+	}
+	if err := timeline.MarkDrawing(time.Unix(3, 0)); err != nil {
+		t.Fatalf("mark drawing: %v", err)
+	}
+	if err := timeline.MarkStopped(time.Unix(4, 0)); err != nil {
+		t.Fatalf("mark stopped: %v", err)
+	}
+
+	if _, err := Restore(
+		"task-1",
+		"user-1",
+		"session-1",
+		"",
+		"draw a cat",
+		"",
+		"",
+		StatusStopped,
+		nil,
+		timeline,
+		context,
+		"",
+		"",
+	); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func newTestTask(t *testing.T) Task {
 	t.Helper()
 
@@ -143,4 +318,14 @@ func newTestTask(t *testing.T) Task {
 		t.Fatalf("new task: %v", err)
 	}
 	return task
+}
+
+func mustNewTimeline(t *testing.T, createdAt time.Time) Timeline {
+	t.Helper()
+
+	timeline, err := NewTimeline(createdAt)
+	if err != nil {
+		t.Fatalf("new timeline: %v", err)
+	}
+	return timeline
 }

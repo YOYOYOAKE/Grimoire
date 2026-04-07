@@ -25,6 +25,31 @@ func NewTimeline(createdAt time.Time) (Timeline, error) {
 	}, nil
 }
 
+func (t Timeline) Validate() error {
+	if t.CreatedAt.IsZero() {
+		return fmt.Errorf("task created_at is required")
+	}
+	if t.UpdatedAt.IsZero() {
+		return fmt.Errorf("task updated_at is required")
+	}
+	if t.TranslatingStartedAt != nil && t.TranslatingStartedAt.IsZero() {
+		return fmt.Errorf("translating_started_at is invalid")
+	}
+	if t.DrawingStartedAt != nil && t.DrawingStartedAt.IsZero() {
+		return fmt.Errorf("drawing_started_at is invalid")
+	}
+	if t.CompletedAt != nil && t.CompletedAt.IsZero() {
+		return fmt.Errorf("completed_at is invalid")
+	}
+	if t.FailedAt != nil && t.FailedAt.IsZero() {
+		return fmt.Errorf("failed_at is invalid")
+	}
+	if t.StoppedAt != nil && t.StoppedAt.IsZero() {
+		return fmt.Errorf("stopped_at is invalid")
+	}
+	return nil
+}
+
 func (t *Timeline) MarkTranslating(at time.Time) error {
 	if at.IsZero() {
 		return fmt.Errorf("translating_started_at is required")
