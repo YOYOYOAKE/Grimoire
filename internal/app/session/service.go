@@ -1,7 +1,13 @@
 package session
 
-type Service struct{}
+type Service struct {
+	sessions SessionRepository
+	messages SessionMessageRepository
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(sessions SessionRepository, messages SessionMessageRepository) *Service {
+	return &Service{
+		sessions: sessions,
+		messages: messages,
+	}
 }

@@ -1,7 +1,13 @@
 package task
 
-type Service struct{}
+type Service struct {
+	tasks    TaskRepository
+	txRunner TxRunner
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(tasks TaskRepository, txRunner TxRunner) *Service {
+	return &Service{
+		tasks:    tasks,
+		txRunner: txRunner,
+	}
 }

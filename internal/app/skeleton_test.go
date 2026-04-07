@@ -15,13 +15,13 @@ import (
 )
 
 func TestAppServiceSkeletonsConstruct(t *testing.T) {
-	if accessapp.NewService() == nil {
+	if accessapp.NewService(nil) == nil {
 		t.Fatal("expected access service")
 	}
 	if chatapp.NewService() == nil {
 		t.Fatal("expected chat service")
 	}
-	if sessionapp.NewService() == nil {
+	if sessionapp.NewService(nil, nil) == nil {
 		t.Fatal("expected session service")
 	}
 	if conversationapp.NewService() == nil {
@@ -30,7 +30,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if requestapp.NewService() == nil {
 		t.Fatal("expected request service")
 	}
-	if taskapp.NewService() == nil {
+	if taskapp.NewService(nil, nil) == nil {
 		t.Fatal("expected task service")
 	}
 	if runnerapp.NewService() == nil {

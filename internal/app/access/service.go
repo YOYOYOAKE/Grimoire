@@ -1,7 +1,9 @@
 package access
 
-type Service struct{}
+type Service struct {
+	users UserRepository
+}
 
-func NewService() *Service {
-	return &Service{}
+func NewService(users UserRepository) *Service {
+	return &Service{users: users}
 }
