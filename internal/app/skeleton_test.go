@@ -30,7 +30,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if requestapp.NewService(nil, nil, nil, 15) == nil {
 		t.Fatal("expected request service")
 	}
-	if taskapp.NewService(nil, nil, nil) == nil {
+	if taskapp.NewService(nil, nil, nil, nil, nil) == nil {
 		t.Fatal("expected task service")
 	}
 	if runnerapp.NewService(nil, nil, nil, nil) == nil {
