@@ -2,8 +2,10 @@ package bootstrap
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
@@ -23,6 +25,7 @@ const workerConcurrency = 1 // NAI rejects concurrent jobs, so draw tasks must b
 type App struct {
 	bot         *telegram.Bot
 	worker      *memoryqueue.Worker
+	database    *sql.DB
 	logger      *slog.Logger
 	adminChatID int64
 	wiring      reservedWiring
@@ -35,13 +38,23 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	}
 
 	taskRepo := memoryrepo.NewTaskRepository()
-	preferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
+	runtimePreferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("init runtime preference repository: %w", err)
 	}
+	adminTelegramID := strconv.FormatInt(cfg.Telegram.AdminUserID, 10)
+	preferenceRepo, db, err := preparePreferenceRepository(
+		context.Background(),
+		wiring.StorageLayout.DatabasePath,
+		runtimePreferenceRepo,
+		adminTelegramID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("init preference repository: %w", err)
+	}
 
 	telegramBot := telegram.NewBot(cfg, logger)
-	preferenceService := preferencesapp.NewService(preferenceRepo)
+	preferenceService := preferencesapp.NewService(preferenceRepo, adminTelegramID)
 	systemClock := platformclock.NewSystemClock()
 	idGenerator := platformid.NewUUIDGenerator()
 	imageGenerator, err := nai.NewClient(cfg, logger)
@@ -50,7 +63,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	}
 	drawService := drawapp.NewService(
 		taskRepo,
-		preferenceRepo,
+		runtimePreferenceRepo,
 		openai.NewTranslateFailoverClient(cfg.LLMs, logger),
 		imageGenerator,
 		telegramBot,
@@ -72,6 +85,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 
 	return &App{
 		bot:         telegramBot,
+		database:    db,
 		worker:      worker,
 		logger:      logger,
 		adminChatID: cfg.Telegram.AdminUserID,
@@ -80,6 +94,15 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 }
 
 func (a *App) Run(ctx context.Context) error {
+	defer func() {
+		if a.database == nil {
+			return
+		}
+		if err := a.database.Close(); err != nil && a.logger != nil {
+			a.logger.Warn("close sqlite database failed", "error", err)
+		}
+	}()
+
 	a.worker.Start(ctx)
 	a.logger.Info(
 		"reserved runtime wiring prepared",

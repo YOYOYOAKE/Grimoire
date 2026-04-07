@@ -38,10 +38,10 @@ type DrawService interface {
 }
 
 type PreferenceService interface {
-	Get() (domainpreferences.Preference, error)
-	UpdateShape(shape domaindraw.Shape) (domainpreferences.Preference, error)
-	UpdateArtists(artists string) (domainpreferences.Preference, error)
-	ClearArtists() (domainpreferences.Preference, error)
+	Get(ctx context.Context) (domainpreferences.Preference, error)
+	UpdateShape(ctx context.Context, shape domaindraw.Shape) (domainpreferences.Preference, error)
+	UpdateArtists(ctx context.Context, artists string) (domainpreferences.Preference, error)
+	ClearArtists(ctx context.Context) (domainpreferences.Preference, error)
 }
 
 type BalanceService interface {
@@ -171,7 +171,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 			return
 		}
 		b.clearPendingArtists()
-		if _, err := b.preferenceService.UpdateArtists(text); err != nil {
+		if _, err := b.preferenceService.UpdateArtists(ctx, text); err != nil {
 			b.logWarn("update artists failed", "chat_id", message.Chat.ID, "error", err)
 			b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("设置画师串失败: %v", err))
 			return
@@ -215,30 +215,30 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 
 	switch query.Data {
 	case cbShapeSmallPortrait:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSmallPortrait)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeSmallPortrait)
 	case cbShapeSmallLandscape:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSmallLandscape)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeSmallLandscape)
 	case cbShapeSmallSquare:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSmallSquare)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeSmallSquare)
 	case cbShapeSquare:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeSquare)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeSquare)
 	case cbShapeLandscape:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLandscape)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeLandscape)
 	case cbShapePortrait:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapePortrait)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapePortrait)
 	case cbShapeLargePortrait:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargePortrait)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeLargePortrait)
 	case cbShapeLargeLandscape:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargeLandscape)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeLargeLandscape)
 	case cbShapeLargeSquare:
-		pref, err = b.preferenceService.UpdateShape(domaindraw.ShapeLargeSquare)
+		pref, err = b.preferenceService.UpdateShape(ctx, domaindraw.ShapeLargeSquare)
 	case cbSetArtists:
 		b.setPendingArtists()
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "请发送新的画师串", false)
 		b.sendSimpleMessage(ctx, query.Message.Chat.ID, "请发送新的画师串，或发送 /start 取消。")
 		return
 	case cbClearArtists:
-		pref, err = b.preferenceService.ClearArtists()
+		pref, err = b.preferenceService.ClearArtists(ctx)
 	default:
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 		return
@@ -254,7 +254,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 }
 
 func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, messageID int64, notice string) {
-	pref, err := b.preferenceService.Get()
+	pref, err := b.preferenceService.Get(ctx)
 	if err != nil {
 		b.logWarn("load image preference failed", "chat_id", chatID, "error", err)
 		b.sendSimpleMessage(ctx, chatID, fmt.Sprintf("加载偏好失败: %v", err))

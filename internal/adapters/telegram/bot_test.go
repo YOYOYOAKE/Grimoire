@@ -39,26 +39,26 @@ type balanceServiceMock struct {
 	err     error
 }
 
-func (m *preferenceServiceMock) Get() (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) Get(context.Context) (domainpreferences.Preference, error) {
 	if !m.pref.Shape.Valid() {
 		m.pref = domainpreferences.DefaultPreference()
 	}
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) UpdateShape(shape domaindraw.Shape) (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) UpdateShape(_ context.Context, shape domaindraw.Shape) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
 	m.pref.Shape = shape
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) UpdateArtists(artist string) (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) UpdateArtists(_ context.Context, artist string) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
 	m.pref.Artists = strings.TrimSpace(artist)
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) ClearArtists() (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) ClearArtists(context.Context) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
 	return m.pref, nil
 }
