@@ -44,6 +44,15 @@ func TestBuildArtistsPromptText(t *testing.T) {
 	}
 }
 
+func TestBuildStartTextIncludesNewSessionCommand(t *testing.T) {
+	text := buildStartText()
+	for _, expected := range []string{"/new", "新建一个会话"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected %q in text, got %s", expected, text)
+		}
+	}
+}
+
 func TestBuildBalanceText(t *testing.T) {
 	text := buildBalanceText(domainnai.AccountBalance{
 		PurchasedTrainingSteps: 321,
@@ -68,6 +77,12 @@ func TestBuildBalanceText(t *testing.T) {
 func TestBuildTaskStartedText(t *testing.T) {
 	if text := buildTaskStartedText(); text != "已开始绘图" {
 		t.Fatalf("unexpected task started text: %q", text)
+	}
+}
+
+func TestBuildNewSessionText(t *testing.T) {
+	if text := buildNewSessionText(); text != "已开始新的会话，之前的对话不会影响后续需求。" {
+		t.Fatalf("unexpected new session text: %q", text)
 	}
 }
 

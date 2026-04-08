@@ -10,7 +10,7 @@ import (
 )
 
 func buildStartText() string {
-	return "Grimoire v2\n\n发送文本即可进入需求对话，确认后再开始绘图。\n发送 /img 可修改全局默认图像尺寸和画师串。\n发送 /balance 可查询 NAI 余额。"
+	return "Grimoire v2\n\n发送文本即可进入需求对话，确认后再开始绘图。\n发送 /new 可新建一个会话并重新开始需求收敛。\n发送 /img 可修改全局默认图像尺寸和画师串。\n发送 /balance 可查询 NAI 余额。"
 }
 
 func buildImageMenuText(notice string, pref domainpreferences.Preference) string {
@@ -53,6 +53,10 @@ func buildArtistsPromptText() string {
 
 func buildTaskStartedText() string {
 	return "已开始绘图"
+}
+
+func buildNewSessionText() string {
+	return "已开始新的会话，之前的对话不会影响后续需求。"
 }
 
 func taskProgressMarkup(taskID string) *InlineKeyboardMarkup {

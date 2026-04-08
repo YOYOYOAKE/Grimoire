@@ -10,10 +10,12 @@ import (
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	preferencesapp "grimoire/internal/app/preferences"
+	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
 	"grimoire/internal/config"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
+	domainsession "grimoire/internal/domain/session"
 	domaintask "grimoire/internal/domain/task"
 	"grimoire/internal/platform/httpclient"
 )
@@ -22,6 +24,10 @@ const apiBase = "https://api.telegram.org"
 
 type ChatService interface {
 	HandleText(ctx context.Context, command chatapp.HandleTextCommand) (chatapp.HandleTextResult, error)
+}
+
+type SessionService interface {
+	CreateNew(ctx context.Context, command sessionapp.CreateNewCommand) (domainsession.Session, error)
 }
 
 type AccessService interface {
@@ -54,6 +60,7 @@ type Bot struct {
 	updateOffset      int64
 	accessService     AccessService
 	chatService       ChatService
+	sessionService    SessionService
 	taskService       TaskService
 	preferenceService PreferenceService
 	balanceService    BalanceService
@@ -73,6 +80,10 @@ func NewBot(cfg config.Config, logger *slog.Logger) *Bot {
 
 func (b *Bot) SetChatService(service ChatService) {
 	b.chatService = service
+}
+
+func (b *Bot) SetSessionService(service SessionService) {
+	b.sessionService = service
 }
 
 func (b *Bot) SetAccessService(service AccessService) {

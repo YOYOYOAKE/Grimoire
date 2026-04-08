@@ -127,6 +127,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 
 	telegramBot.SetAccessService(accessService)
 	telegramBot.SetChatService(chatService)
+	telegramBot.SetSessionService(sessionService)
 	telegramBot.SetTaskService(taskService)
 	telegramBot.SetPreferenceService(preferenceService)
 	telegramBot.SetBalanceService(imageGenerator)

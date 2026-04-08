@@ -14,11 +14,13 @@ import (
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	preferencesapp "grimoire/internal/app/preferences"
+	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
+	domainsession "grimoire/internal/domain/session"
 	domaintask "grimoire/internal/domain/task"
 )
 
@@ -58,6 +60,23 @@ func (m *accessServiceMock) Check(_ context.Context, command accessapp.CheckComm
 		return accessapp.Decision{}, m.err
 	}
 	return m.decision, nil
+}
+
+type sessionServiceMock struct {
+	commands []sessionapp.CreateNewCommand
+	result   domainsession.Session
+	err      error
+}
+
+func (m *sessionServiceMock) CreateNew(_ context.Context, command sessionapp.CreateNewCommand) (domainsession.Session, error) {
+	m.commands = append(m.commands, command)
+	if m.err != nil {
+		return domainsession.Session{}, m.err
+	}
+	if strings.TrimSpace(m.result.ID) == "" {
+		m.result = domainsession.Session{ID: "session-2", UserID: command.UserID}
+	}
+	return m.result, nil
 }
 
 type taskServiceMock struct {
@@ -209,6 +228,7 @@ func newTestBotWithLogger(t *testing.T, logger *slog.Logger) (*Bot, *accessServi
 
 	accessService := &accessServiceMock{decision: accessapp.Decision{Allowed: true}}
 	chatService := &chatServiceMock{}
+	sessionService := &sessionServiceMock{}
 	taskService := &taskServiceMock{}
 	prefService := &preferenceServiceMock{}
 	balanceService := &balanceServiceMock{
@@ -222,6 +242,7 @@ func newTestBotWithLogger(t *testing.T, logger *slog.Logger) (*Bot, *accessServi
 	}
 	bot.SetAccessService(accessService)
 	bot.SetChatService(chatService)
+	bot.SetSessionService(sessionService)
 	bot.SetTaskService(taskService)
 	bot.SetPreferenceService(prefService)
 	bot.SetBalanceService(balanceService)
@@ -367,8 +388,13 @@ func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
 	if len(chatService.commands) != 0 {
 		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
 	}
-	if !strings.Contains(buffer.String(), "发送文本即可进入需求对话，确认后再开始绘图。") {
-		t.Fatalf("expected updated start text, got %s", buffer.String())
+	for _, expected := range []string{
+		"发送文本即可进入需求对话，确认后再开始绘图。",
+		"发送 /new 可新建一个会话并重新开始需求收敛。",
+	} {
+		if !strings.Contains(buffer.String(), expected) {
+			t.Fatalf("expected updated start text to include %q, got %s", expected, buffer.String())
+		}
 	}
 }
 
@@ -399,6 +425,50 @@ func TestHandleImgCommandSendsImageMenu(t *testing.T) {
 		if !strings.Contains(logOutput, expected) {
 			t.Fatalf("expected %q in output, got %s", expected, logOutput)
 		}
+	}
+}
+
+func TestHandleNewCommandCreatesNewSession(t *testing.T) {
+	bot, _, chatService, _, _, _, buffer := newTestBot(t)
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 17,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/new",
+	})
+
+	if len(chatService.commands) != 0 {
+		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
+	}
+	sessionService, ok := bot.sessionService.(*sessionServiceMock)
+	if !ok {
+		t.Fatalf("expected session service mock, got %#v", bot.sessionService)
+	}
+	if len(sessionService.commands) != 1 {
+		t.Fatalf("expected one create new command, got %d", len(sessionService.commands))
+	}
+	if sessionService.commands[0].UserID != "1" {
+		t.Fatalf("unexpected create new user id: %q", sessionService.commands[0].UserID)
+	}
+	if !strings.Contains(buffer.String(), buildNewSessionText()) {
+		t.Fatalf("expected new session text, got %s", buffer.String())
+	}
+}
+
+func TestHandleNewCommandClearsPendingArtists(t *testing.T) {
+	bot, _, _, _, _, _, _ := newTestBot(t)
+	bot.setPendingArtists()
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 18,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/new",
+	})
+
+	if bot.isPendingArtists() {
+		t.Fatal("expected pending artists cleared after /new")
 	}
 }
 
@@ -646,6 +716,9 @@ func TestSetMyCommandsIncludesBalance(t *testing.T) {
 
 	if !strings.Contains(buffer.String(), `"command":"balance"`) {
 		t.Fatalf("expected balance command in payload, got %s", buffer.String())
+	}
+	if !strings.Contains(buffer.String(), `"command":"new"`) {
+		t.Fatalf("expected new command in payload, got %s", buffer.String())
 	}
 }
 

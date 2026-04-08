@@ -10,6 +10,7 @@ import (
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	preferencesapp "grimoire/internal/app/preferences"
+	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -44,6 +45,33 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	case "/start":
 		b.clearPendingArtists()
 		_, _ = b.sendMessage(ctx, message.Chat.ID, buildStartText(), nil, 0)
+		return
+	case "/new":
+		b.clearPendingArtists()
+		if b.sessionService == nil {
+			b.logWarn("session service is not initialized", "chat_id", message.Chat.ID)
+			b.sendSimpleMessage(ctx, message.Chat.ID, "会话服务未初始化")
+			return
+		}
+		created, err := b.sessionService.CreateNew(ctx, sessionapp.CreateNewCommand{
+			UserID: strconv.FormatInt(message.From.ID, 10),
+		})
+		if err != nil {
+			b.logWarn("create new session failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
+			b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("新建会话失败: %v", err))
+			return
+		}
+		if _, err := b.sendMessage(ctx, message.Chat.ID, buildNewSessionText(), nil, 0); err != nil {
+			b.logWarn("send new session reply failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
+			return
+		}
+		b.logInfo(
+			"telegram new session created",
+			"chat_id", message.Chat.ID,
+			"telegram_user_id", message.From.ID,
+			"message_id", message.MessageID,
+			"session_id", created.ID,
+		)
 		return
 	case "/img":
 		b.clearPendingArtists()
