@@ -45,6 +45,13 @@ type conversationPreferencePayload struct {
 	Artists string `json:"artists,omitempty"`
 }
 
+const (
+	createDrawingTaskToolName = "create_drawing_task"
+
+	conversationResponseModeJSON = "json"
+	conversationResponseModeTool = "tool"
+)
+
 func NewConversationClient(cfg config.LLM, logger *slog.Logger) *ConversationClient {
 	return &ConversationClient{
 		cfg:        cfg,
@@ -75,6 +82,7 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 		},
 		"temperature": 0.2,
 		"stream":      false,
+		"tools":       []any{createDrawingTaskTool()},
 	}
 
 	payload, err := json.Marshal(body)
@@ -106,13 +114,19 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 		return conversation.ConversationOutput{}, fmt.Errorf("llm status=%d body=%s", resp.StatusCode, truncate(string(respBody), 400))
 	}
 
-	content, err := extractConversationContent(respBody)
+	content, responseMode, err := extractConversationContent(respBody)
 	if err != nil {
 		c.logFailure("extract conversation content failed", err, string(respBody), "")
 		return conversation.ConversationOutput{}, err
 	}
 
-	output, err := parseConversationOutput(content)
+	var output conversation.ConversationOutput
+	switch responseMode {
+	case conversationResponseModeTool:
+		output, err = parseCreateDrawingTaskOutput(content)
+	default:
+		output, err = parseConversationOutput(content)
+	}
 	if err != nil {
 		c.logFailure("parse conversation content failed", err, string(respBody), content)
 		return conversation.ConversationOutput{}, err
@@ -151,6 +165,32 @@ func buildConversationPayload(input conversation.ConversationInput) (conversatio
 	}, nil
 }
 
+func createDrawingTaskTool() map[string]any {
+	return map[string]any{
+		"type": "function",
+		"function": map[string]any{
+			"name":        createDrawingTaskToolName,
+			"description": "Create a drawing task immediately when the user is explicitly asking to start drawing now.",
+			"parameters": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"request": map[string]any{
+						"type":        "string",
+						"minLength":   1,
+						"description": "The final Chinese drawing request to hand to the drawing pipeline.",
+					},
+					"summary": map[string]any{
+						"type":        "object",
+						"description": "Updated hidden conversation summary as a JSON object.",
+					},
+				},
+				"required":             []string{"request", "summary"},
+				"additionalProperties": false,
+			},
+		},
+	}
+}
+
 func parseConversationOutput(raw string) (conversation.ConversationOutput, error) {
 	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "```json")
@@ -179,6 +219,33 @@ func parseConversationOutput(raw string) (conversation.ConversationOutput, error
 	return conversation.ConversationOutput{
 		Reply:   reply,
 		Summary: domainsession.NewSummary(summaryContent),
+	}, nil
+}
+
+func parseCreateDrawingTaskOutput(raw string) (conversation.ConversationOutput, error) {
+	raw = strings.TrimSpace(raw)
+	var parsed struct {
+		Request string          `json:"request"`
+		Summary json.RawMessage `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return conversation.ConversationOutput{}, fmt.Errorf("parse create drawing task json: %w", err)
+	}
+
+	request := strings.TrimSpace(parsed.Request)
+	if request == "" {
+		return conversation.ConversationOutput{}, fmt.Errorf("create drawing task response missing request")
+	}
+	summaryContent, err := normalizeConversationSummary(parsed.Summary)
+	if err != nil {
+		return conversation.ConversationOutput{}, err
+	}
+
+	return conversation.ConversationOutput{
+		Summary: domainsession.NewSummary(summaryContent),
+		CreateDrawingTask: &conversation.CreateDrawingTask{
+			Request: request,
+		},
 	}, nil
 }
 
@@ -219,31 +286,145 @@ func isJSONObject(raw []byte) bool {
 	return true
 }
 
-func extractConversationContent(respBody []byte) (string, error) {
+func extractConversationContent(respBody []byte) (string, string, error) {
 	respBody = bytes.TrimSpace(respBody)
 	if len(respBody) == 0 {
-		return "", fmt.Errorf("empty llm response")
+		return "", "", fmt.Errorf("empty llm response")
+	}
+
+	if arguments, found, err := parseConversationToolCallArguments(respBody); err != nil {
+		return "", "", err
+	} else if found {
+		return arguments, conversationResponseModeTool, nil
 	}
 
 	if content, ok := parseOpenAICompletionPayload(respBody); ok {
-		return content, nil
+		return content, conversationResponseModeJSON, nil
 	}
 
 	if json.Valid(respBody) {
-		return string(respBody), nil
+		return string(respBody), conversationResponseModeJSON, nil
 	}
 
 	if bytes.Contains(respBody, []byte("data:")) {
+		if arguments, found, err := parseConversationSSEToolCallArguments(respBody); err != nil {
+			return "", "", err
+		} else if found {
+			return arguments, conversationResponseModeTool, nil
+		}
+
 		content, err := parseConversationSSEContent(respBody)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if strings.TrimSpace(content) != "" {
-			return content, nil
+			return content, conversationResponseModeJSON, nil
 		}
 	}
 
-	return "", fmt.Errorf("unsupported llm response format")
+	return "", "", fmt.Errorf("unsupported llm response format")
+}
+
+func parseConversationToolCallArguments(payload []byte) (string, bool, error) {
+	var out struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []struct {
+					Function struct {
+						Name      string          `json:"name"`
+						Arguments json.RawMessage `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return "", false, nil
+	}
+	if len(out.Choices) == 0 {
+		return "", false, nil
+	}
+
+	for _, toolCall := range out.Choices[0].Message.ToolCalls {
+		if strings.TrimSpace(toolCall.Function.Name) != createDrawingTaskToolName {
+			continue
+		}
+		arguments, err := decodeToolArgumentString(toolCall.Function.Arguments)
+		if err != nil {
+			return "", true, err
+		}
+		return arguments, true, nil
+	}
+	return "", false, nil
+}
+
+func parseConversationSSEToolCallArguments(respBody []byte) (string, bool, error) {
+	type collectedToolCall struct {
+		name      string
+		arguments strings.Builder
+	}
+
+	lines := bytes.Split(respBody, []byte("\n"))
+	collected := make(map[int]*collectedToolCall)
+	order := make([]int, 0)
+
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+
+		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+
+		var out struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						Index    int `json:"index"`
+						Function struct {
+							Name      string          `json:"name"`
+							Arguments json.RawMessage `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal(payload, &out); err != nil {
+			continue
+		}
+		if len(out.Choices) == 0 {
+			continue
+		}
+
+		for _, toolCall := range out.Choices[0].Delta.ToolCalls {
+			call, ok := collected[toolCall.Index]
+			if !ok {
+				call = &collectedToolCall{}
+				collected[toolCall.Index] = call
+				order = append(order, toolCall.Index)
+			}
+			if name := strings.TrimSpace(toolCall.Function.Name); name != "" {
+				call.name = name
+			}
+			arguments, err := decodeToolArgumentString(toolCall.Function.Arguments)
+			if err != nil {
+				return "", true, err
+			}
+			call.arguments.WriteString(arguments)
+		}
+	}
+
+	for _, index := range order {
+		call := collected[index]
+		if call == nil || call.name != createDrawingTaskToolName {
+			continue
+		}
+		return call.arguments.String(), true, nil
+	}
+	return "", false, nil
 }
 
 func parseConversationSSEContent(respBody []byte) (string, error) {

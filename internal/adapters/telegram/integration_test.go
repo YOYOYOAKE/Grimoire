@@ -11,8 +11,10 @@ import (
 
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	accessapp "grimoire/internal/app/access"
+	chatapp "grimoire/internal/app/chat"
+	conversationapp "grimoire/internal/app/conversation"
 	preferencesapp "grimoire/internal/app/preferences"
-	requestapp "grimoire/internal/app/request"
+	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
@@ -22,12 +24,12 @@ import (
 	sqlitefixture "grimoire/internal/testsupport/sqlitefixture"
 )
 
-type telegramRequestGeneratorStub struct {
-	output string
-	input  requestapp.GenerateInput
+type sqliteConversationModelStub struct {
+	output conversationapp.ConversationOutput
+	input  conversationapp.ConversationInput
 }
 
-func (s *telegramRequestGeneratorStub) Generate(_ context.Context, input requestapp.GenerateInput) (string, error) {
+func (s *sqliteConversationModelStub) Converse(_ context.Context, input conversationapp.ConversationInput) (conversationapp.ConversationOutput, error) {
 	s.input = input
 	return s.output, nil
 }
@@ -41,7 +43,7 @@ func (s *telegramSchedulerStub) Enqueue(taskID string) error {
 	return nil
 }
 
-func TestRequestConfirmCallbackWithSQLiteServicesCreatesTask(t *testing.T) {
+func TestHandleMessageWithSQLiteChatServicesCreatesTaskFromConversationToolCall(t *testing.T) {
 	ctx := context.Background()
 	db := sqlitefixture.OpenDB(t)
 	preference, err := domainpreferences.New(domaindraw.ShapePortrait, "artist:foo")
@@ -49,19 +51,22 @@ func TestRequestConfirmCallbackWithSQLiteServicesCreatesTask(t *testing.T) {
 		t.Fatalf("new preference: %v", err)
 	}
 	sqlitefixture.CreateUserAndSession(t, db, "1", "session-1", preference)
-	sqlitefixture.AppendMessage(t, db, "session-1", "message-1", domainsession.MessageRoleUser, "画一个月下的少女", time.Unix(1, 0).UTC())
 
-	bot, taskRepo, scheduler, generator, buffer := newSQLiteBackedTestBot(t, db, []string{"task-confirm"})
-	generator.output = "draw a moonlit girl"
-
-	bot.handleCallbackQuery(ctx, CallbackQuery{
-		ID:   "cb-confirm-real",
-		From: User{ID: 1},
-		Message: &Message{
-			MessageID: 30,
-			Chat:      Chat{ID: 100},
+	model := &sqliteConversationModelStub{
+		output: conversationapp.ConversationOutput{
+			Summary: domainsession.NewSummary(`{"goal":"moonlit_girl","ready":true}`),
+			CreateDrawingTask: &conversationapp.CreateDrawingTask{
+				Request: "绘制一位月下少女，夜景氛围，纵向构图。",
+			},
 		},
-		Data: "request:confirm:session-1",
+	}
+	bot, taskRepo, scheduler, buffer := newSQLiteBackedTestBot(t, db, []string{"task-confirm"}, model)
+
+	bot.handleMessage(ctx, Message{
+		MessageID: 30,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "开始绘图",
 	})
 
 	stored, err := taskRepo.Get(ctx, "task-confirm")
@@ -71,7 +76,7 @@ func TestRequestConfirmCallbackWithSQLiteServicesCreatesTask(t *testing.T) {
 	if stored.Status != domaintask.StatusQueued {
 		t.Fatalf("unexpected task status: %s", stored.Status)
 	}
-	if stored.Request != "draw a moonlit girl" {
+	if stored.Request != "绘制一位月下少女，夜景氛围，纵向构图。" {
 		t.Fatalf("unexpected request: %q", stored.Request)
 	}
 	if stored.Context.Raw() != `{"version":1,"shape":"portrait","artists":"artist:foo"}` {
@@ -80,17 +85,14 @@ func TestRequestConfirmCallbackWithSQLiteServicesCreatesTask(t *testing.T) {
 	if len(scheduler.taskIDs) != 1 || scheduler.taskIDs[0] != "task-confirm" {
 		t.Fatalf("unexpected scheduled task ids: %#v", scheduler.taskIDs)
 	}
-	if generator.input.Preference.Shape != domaindraw.ShapePortrait || generator.input.Preference.Artists != "artist:foo" {
-		t.Fatalf("unexpected request preference: %#v", generator.input.Preference)
+	if model.input.Preference.Shape != domaindraw.ShapePortrait || model.input.Preference.Artists != "artist:foo" {
+		t.Fatalf("unexpected conversation preference: %#v", model.input.Preference)
 	}
-	if len(generator.input.Messages) != 1 || generator.input.Messages[0].Content != "画一个月下的少女" {
-		t.Fatalf("unexpected request messages: %#v", generator.input.Messages)
+	if len(model.input.Messages) != 1 || model.input.Messages[0].Content != "开始绘图" {
+		t.Fatalf("unexpected conversation messages: %#v", model.input.Messages)
 	}
-	if !strings.Contains(buffer.String(), `"text":"已开始执行"`) {
-		t.Fatalf("expected confirm callback acknowledgement, got %s", buffer.String())
-	}
-	if !strings.Contains(buffer.String(), `已确认 request`) {
-		t.Fatalf("expected confirmed request edit, got %s", buffer.String())
+	if !strings.Contains(buffer.String(), `"text":"已开始绘图"`) {
+		t.Fatalf("expected task started text, got %s", buffer.String())
 	}
 }
 
@@ -105,7 +107,7 @@ func TestHandleStopTaskCallbackWithSQLiteTaskServicePersistsStoppedTask(t *testi
 		t.Fatalf("create drawing task: %v", err)
 	}
 
-	bot, _, _, _, buffer := newSQLiteBackedTestBot(t, db, nil)
+	bot, _, _, buffer := newSQLiteBackedTestBot(t, db, nil, nil)
 	bot.handleCallbackQuery(ctx, CallbackQuery{
 		ID:   "cb-stop-real",
 		From: User{ID: 1},
@@ -145,7 +147,7 @@ func TestHandleRetryCallbacksWithSQLiteTaskServiceCreateDerivedTasks(t *testing.
 		t.Fatalf("create source task: %v", err)
 	}
 
-	bot, _, scheduler, _, buffer := newSQLiteBackedTestBot(t, db, []string{"task-retry-translate", "task-retry-draw"})
+	bot, _, scheduler, buffer := newSQLiteBackedTestBot(t, db, []string{"task-retry-translate", "task-retry-draw"}, nil)
 
 	bot.handleCallbackQuery(ctx, CallbackQuery{
 		ID:   "cb-retry-translate-real",
@@ -203,17 +205,17 @@ func newSQLiteBackedTestBot(
 	t *testing.T,
 	db *sql.DB,
 	taskIDs []string,
-) (*Bot, *sqliterepo.TaskRepository, *telegramSchedulerStub, *telegramRequestGeneratorStub, *bytes.Buffer) {
+	model conversationapp.ConversationModel,
+) (*Bot, *sqliterepo.TaskRepository, *telegramSchedulerStub, *bytes.Buffer) {
 	t.Helper()
 
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 	userRepo := sqliterepo.NewUserRepository(db)
 	sessionRepo := sqliterepo.NewSessionRepository(db, platformid.NewStaticGenerator("unused-session"))
 	messageRepo := sqliterepo.NewSessionMessageRepository(db)
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	txRunner := sqliterepo.NewTxRunner(db)
 	scheduler := &telegramSchedulerStub{}
-	generator := &telegramRequestGeneratorStub{}
 
 	taskIndex := 0
 	taskIDGenerator := func() string {
@@ -226,9 +228,32 @@ func newSQLiteBackedTestBot(
 		return "task-generated-" + strconv.Itoa(taskIndex)
 	}
 
+	if model != nil {
+		sessionService := sessionapp.NewService(sessionRepo, messageRepo, txRunner)
+		conversationService := conversationapp.NewService(
+			model,
+			sessionRepo,
+			messageRepo,
+			txRunner,
+			10,
+			func() time.Time { return time.Unix(9, 0).UTC() },
+			func() string { return "assistant-message-1" },
+		)
+		bot.SetChatService(chatapp.NewService(
+			userRepo,
+			sessionService,
+			conversationService,
+			taskapp.NewService(
+				taskRepo,
+				txRunner,
+				scheduler,
+				func() time.Time { return time.Unix(10, 0).UTC() },
+				taskIDGenerator,
+			),
+		))
+	}
 	bot.SetAccessService(accessapp.NewService(userRepo))
 	bot.SetPreferenceService(preferencesapp.NewService(userRepo))
-	bot.SetRequestService(requestapp.NewService(generator, sessionRepo, messageRepo, 10))
 	bot.SetTaskService(taskapp.NewService(
 		taskRepo,
 		txRunner,
@@ -237,7 +262,7 @@ func newSQLiteBackedTestBot(
 		taskIDGenerator,
 	))
 
-	return bot, taskRepo, scheduler, generator, buffer
+	return bot, taskRepo, scheduler, buffer
 }
 
 func mustTelegramTaskAtStatus(t *testing.T, id string, status domaintask.Status, createdAt time.Time) domaintask.Task {

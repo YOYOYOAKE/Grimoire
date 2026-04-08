@@ -18,7 +18,6 @@ import (
 	conversationapp "grimoire/internal/app/conversation"
 	preferencesapp "grimoire/internal/app/preferences"
 	recoveryapp "grimoire/internal/app/recovery"
-	requestapp "grimoire/internal/app/request"
 	runnerapp "grimoire/internal/app/runner"
 	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
@@ -73,7 +72,6 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	idGenerator := platformid.NewUUIDGenerator()
 	primaryLLM := cfg.LLMs[0]
 	conversationClient := openai.NewConversationClient(primaryLLM, logger)
-	requestClient := openai.NewRequestClient(primaryLLM, logger)
 	translateClient := openai.NewTranslateFailoverClient(cfg.LLMs, logger)
 	imageGenerator, err := nai.NewClient(cfg, logger)
 	if err != nil {
@@ -93,13 +91,6 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		wiring.ConversationMessageLimit,
 		systemClock.Now,
 		idGenerator.NewString,
-	)
-	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService)
-	requestService := requestapp.NewService(
-		requestClient,
-		sqliteSessionRepo,
-		sqliteSessionMessageRepo,
-		wiring.ConversationMessageLimit,
 	)
 	imageStore, err := localstore.NewImageStore(wiring.StorageLayout)
 	if err != nil {
@@ -129,10 +120,10 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		systemClock.Now,
 		idGenerator.NewString,
 	)
+	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService, taskService)
 
 	telegramBot.SetAccessService(accessService)
 	telegramBot.SetChatService(chatService)
-	telegramBot.SetRequestService(requestService)
 	telegramBot.SetTaskService(taskService)
 	telegramBot.SetPreferenceService(preferenceService)
 	telegramBot.SetBalanceService(imageGenerator)

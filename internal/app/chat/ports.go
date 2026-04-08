@@ -5,7 +5,9 @@ import (
 
 	conversationapp "grimoire/internal/app/conversation"
 	sessionapp "grimoire/internal/app/session"
+	taskapp "grimoire/internal/app/task"
 	domainsession "grimoire/internal/domain/session"
+	domaintask "grimoire/internal/domain/task"
 	domainuser "grimoire/internal/domain/user"
 )
 
@@ -20,4 +22,8 @@ type SessionService interface {
 
 type ConversationService interface {
 	Converse(ctx context.Context, command conversationapp.ConverseCommand) (conversationapp.ConverseResult, error)
+}
+
+type TaskService interface {
+	Create(ctx context.Context, command taskapp.CreateCommand) (domaintask.Task, error)
 }

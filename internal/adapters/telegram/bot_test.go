@@ -13,7 +13,6 @@ import (
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	preferencesapp "grimoire/internal/app/preferences"
-	requestapp "grimoire/internal/app/request"
 	taskapp "grimoire/internal/app/task"
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
@@ -37,7 +36,7 @@ func (m *chatServiceMock) HandleText(_ context.Context, command chatapp.HandleTe
 	if m.err != nil {
 		return chatapp.HandleTextResult{}, m.err
 	}
-	if strings.TrimSpace(m.result.Reply) == "" {
+	if strings.TrimSpace(m.result.Reply) == "" && strings.TrimSpace(m.result.CreatedTaskID) == "" {
 		m.result = chatapp.HandleTextResult{
 			SessionID: "session-1",
 			Reply:     "请再补充一点构图方向。",
@@ -58,46 +57,6 @@ func (m *accessServiceMock) Check(_ context.Context, command accessapp.CheckComm
 		return accessapp.Decision{}, m.err
 	}
 	return m.decision, nil
-}
-
-type requestServiceMock struct {
-	generateCommands []requestapp.GenerateCommand
-	generateResult   requestapp.PendingRequest
-	generateErr      error
-	resolveCommands  []requestapp.ResolveDecisionCommand
-	decision         requestapp.Decision
-}
-
-func (m *requestServiceMock) Generate(_ context.Context, command requestapp.GenerateCommand) (requestapp.PendingRequest, error) {
-	m.generateCommands = append(m.generateCommands, command)
-	if m.generateErr != nil {
-		return requestapp.PendingRequest{}, m.generateErr
-	}
-	if strings.TrimSpace(m.generateResult.Request) == "" {
-		sessionID := strings.TrimSpace(command.SessionID)
-		m.generateResult = requestapp.PendingRequest{
-			Request: "draw a moonlit girl",
-			ConfirmAction: requestapp.Action{
-				Kind:         requestapp.DecisionKindConfirm,
-				SessionID:    sessionID,
-				CallbackData: requestapp.RequestConfirmPrefix + sessionID,
-			},
-			ReviseAction: requestapp.Action{
-				Kind:         requestapp.DecisionKindRevise,
-				SessionID:    sessionID,
-				CallbackData: requestapp.RequestRevisePrefix + sessionID,
-			},
-		}
-	}
-	return m.generateResult, nil
-}
-
-func (m *requestServiceMock) ResolveDecision(command requestapp.ResolveDecisionCommand) requestapp.Decision {
-	m.resolveCommands = append(m.resolveCommands, command)
-	if m.decision != (requestapp.Decision{}) {
-		return m.decision
-	}
-	return requestapp.NewService(nil, nil, nil, 1).ResolveDecision(command)
 }
 
 type taskServiceMock struct {
@@ -211,7 +170,7 @@ func (m *balanceServiceMock) GetBalance(_ context.Context) (domainnai.AccountBal
 	return m.balance, nil
 }
 
-func newTestBot(t *testing.T) (*Bot, *accessServiceMock, *chatServiceMock, *requestServiceMock, *taskServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
+func newTestBot(t *testing.T) (*Bot, *accessServiceMock, *chatServiceMock, *taskServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
 	t.Helper()
 	buffer := &bytes.Buffer{}
 	bot := NewBot(config.Config{
@@ -244,7 +203,6 @@ func newTestBot(t *testing.T) (*Bot, *accessServiceMock, *chatServiceMock, *requ
 
 	accessService := &accessServiceMock{decision: accessapp.Decision{Allowed: true}}
 	chatService := &chatServiceMock{}
-	requestService := &requestServiceMock{}
 	taskService := &taskServiceMock{}
 	prefService := &preferenceServiceMock{}
 	balanceService := &balanceServiceMock{
@@ -258,15 +216,14 @@ func newTestBot(t *testing.T) (*Bot, *accessServiceMock, *chatServiceMock, *requ
 	}
 	bot.SetAccessService(accessService)
 	bot.SetChatService(chatService)
-	bot.SetRequestService(requestService)
 	bot.SetTaskService(taskService)
 	bot.SetPreferenceService(prefService)
 	bot.SetBalanceService(balanceService)
-	return bot, accessService, chatService, requestService, taskService, prefService, balanceService, buffer
+	return bot, accessService, chatService, taskService, prefService, balanceService, buffer
 }
 
 func TestHandleMessageUsesChatService(t *testing.T) {
-	bot, accessService, chatService, requestService, _, _, _, buffer := newTestBot(t)
+	bot, accessService, chatService, _, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 10,
 		From:      &User{ID: 1},
@@ -292,19 +249,13 @@ func TestHandleMessageUsesChatService(t *testing.T) {
 	if !strings.Contains(buffer.String(), `请再补充一点构图方向。`) {
 		t.Fatalf("expected chat reply to be sent, got %s", buffer.String())
 	}
-	if len(requestService.generateCommands) != 1 || requestService.generateCommands[0].SessionID != "session-1" {
-		t.Fatalf("unexpected request generation commands: %#v", requestService.generateCommands)
-	}
-	if !strings.Contains(buffer.String(), `待确认 request`) {
-		t.Fatalf("expected pending request message, got %s", buffer.String())
-	}
-	if !strings.Contains(buffer.String(), `request:confirm:session-1`) {
-		t.Fatalf("expected confirm callback data, got %s", buffer.String())
+	if strings.Contains(buffer.String(), `待确认 request`) {
+		t.Fatalf("did not expect pending request message, got %s", buffer.String())
 	}
 }
 
 func TestRouteUpdateDispatchesMessage(t *testing.T) {
-	bot, _, chatService, _, _, _, _, _ := newTestBot(t)
+	bot, _, chatService, _, _, _, _ := newTestBot(t)
 	bot.routeUpdate(context.Background(), Update{
 		Message: &Message{
 			MessageID: 10,
@@ -320,7 +271,7 @@ func TestRouteUpdateDispatchesMessage(t *testing.T) {
 }
 
 func TestHandleMessageSendsErrorWhenChatServiceFails(t *testing.T) {
-	bot, _, chatService, _, _, _, _, buffer := newTestBot(t)
+	bot, _, chatService, _, _, _, buffer := newTestBot(t)
 	chatService.err = errors.New("boom")
 
 	bot.handleMessage(context.Background(), Message{
@@ -336,7 +287,7 @@ func TestHandleMessageSendsErrorWhenChatServiceFails(t *testing.T) {
 }
 
 func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
-	bot, _, chatService, _, _, _, _, buffer := newTestBot(t)
+	bot, _, chatService, _, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 10,
 		From:      &User{ID: 1},
@@ -353,7 +304,7 @@ func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
 }
 
 func TestHandleImgCommandSendsImageMenu(t *testing.T) {
-	bot, _, chatService, _, _, prefService, _, buffer := newTestBot(t)
+	bot, _, chatService, _, prefService, _, buffer := newTestBot(t)
 	prefService.pref = domainpreferences.DefaultPreference()
 	prefService.pref.Artists = "artist:foo"
 
@@ -383,7 +334,7 @@ func TestHandleImgCommandSendsImageMenu(t *testing.T) {
 }
 
 func TestImgCallbackUpdatesShape(t *testing.T) {
-	bot, _, _, _, _, prefService, _, buffer := newTestBot(t)
+	bot, _, _, _, prefService, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-1",
 		From: User{ID: 1},
@@ -403,7 +354,7 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 }
 
 func TestHandleCallbackQueryRejectsInvalidData(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-invalid",
 		From: User{ID: 1},
@@ -424,7 +375,7 @@ func TestHandleCallbackQueryRejectsInvalidData(t *testing.T) {
 }
 
 func TestPendingArtistFlow(t *testing.T) {
-	bot, _, _, _, _, prefService, _, _ := newTestBot(t)
+	bot, _, _, _, prefService, _, _ := newTestBot(t)
 	bot.setPendingArtists()
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 11,
@@ -460,7 +411,7 @@ func TestResultMessageHasNoRetryButtons(t *testing.T) {
 }
 
 func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.SendPhoto(context.Background(), 100, 20, "task.png", "", []byte("png")); err != nil {
 		t.Fatalf("send photo: %v", err)
@@ -479,7 +430,7 @@ func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
 }
 
 func TestSendTextUsesSendMessageEndpoint(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if _, err := bot.SendText(context.Background(), 100, 20, "hello"); err != nil {
 		t.Fatalf("send text: %v", err)
@@ -492,7 +443,7 @@ func TestSendTextUsesSendMessageEndpoint(t *testing.T) {
 }
 
 func TestEditTextUsesEditMessageTextEndpoint(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.EditText(context.Background(), 100, 21, "updated"); err != nil {
 		t.Fatalf("edit text: %v", err)
@@ -505,7 +456,7 @@ func TestEditTextUsesEditMessageTextEndpoint(t *testing.T) {
 }
 
 func TestSendPhotoMessageUsesSendPhotoEndpoint(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if _, err := bot.SendPhotoMessage(context.Background(), 100, 20, "task.png", "", []byte("png")); err != nil {
 		t.Fatalf("send photo message: %v", err)
@@ -517,7 +468,7 @@ func TestSendPhotoMessageUsesSendPhotoEndpoint(t *testing.T) {
 }
 
 func TestSendProgressTextIncludesStopButton(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if _, err := bot.SendProgressText(context.Background(), 100, 20, "已入队", "task-1"); err != nil {
 		t.Fatalf("send progress text: %v", err)
@@ -530,7 +481,7 @@ func TestSendProgressTextIncludesStopButton(t *testing.T) {
 }
 
 func TestEditProgressTextIncludesStopButton(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.EditProgressText(context.Background(), 100, 20, "正在绘图", "task-1"); err != nil {
 		t.Fatalf("edit progress text: %v", err)
@@ -543,7 +494,7 @@ func TestEditProgressTextIncludesStopButton(t *testing.T) {
 }
 
 func TestSendResultPhotoMessageIncludesResultButtons(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if _, err := bot.SendResultPhotoMessage(context.Background(), 100, 20, "task.png", "", []byte("png"), "task-1"); err != nil {
 		t.Fatalf("send result photo: %v", err)
@@ -562,7 +513,7 @@ func TestSendResultPhotoMessageIncludesResultButtons(t *testing.T) {
 }
 
 func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.DeleteMessage(context.Background(), 100, 20); err != nil {
 		t.Fatalf("delete message: %v", err)
@@ -578,7 +529,7 @@ func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
 }
 
 func TestHandleBalanceCommandSendsBalance(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 12,
 		From:      &User{ID: 1},
@@ -602,7 +553,7 @@ func TestHandleBalanceCommandSendsBalance(t *testing.T) {
 }
 
 func TestHandleBalanceCommandSendsError(t *testing.T) {
-	bot, _, _, _, _, _, balanceService, buffer := newTestBot(t)
+	bot, _, _, _, _, balanceService, buffer := newTestBot(t)
 	balanceService.err = errors.New("boom")
 
 	bot.handleMessage(context.Background(), Message{
@@ -618,7 +569,7 @@ func TestHandleBalanceCommandSendsError(t *testing.T) {
 }
 
 func TestSetMyCommandsIncludesBalance(t *testing.T) {
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.setMyCommands(context.Background()); err != nil {
 		t.Fatalf("set commands: %v", err)
@@ -630,7 +581,7 @@ func TestSetMyCommandsIncludesBalance(t *testing.T) {
 }
 
 func TestHandleMessageRejectsUnauthorizedUser(t *testing.T) {
-	bot, accessService, chatService, _, _, _, _, buffer := newTestBot(t)
+	bot, accessService, chatService, _, _, _, buffer := newTestBot(t)
 	accessService.decision = accessapp.Decision{Allowed: false, Reason: accessapp.ReasonUserNotFound}
 
 	bot.handleMessage(context.Background(), Message{
@@ -649,7 +600,7 @@ func TestHandleMessageRejectsUnauthorizedUser(t *testing.T) {
 }
 
 func TestHandleCallbackQueryRejectsUnauthorizedUser(t *testing.T) {
-	bot, accessService, _, _, _, _, _, buffer := newTestBot(t)
+	bot, accessService, _, _, _, _, buffer := newTestBot(t)
 	accessService.decision = accessapp.Decision{Allowed: false, Reason: accessapp.ReasonUserBanned}
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
@@ -670,79 +621,27 @@ func TestHandleCallbackQueryRejectsUnauthorizedUser(t *testing.T) {
 	}
 }
 
-func TestHandleMessageSendsErrorWhenRequestGenerationFails(t *testing.T) {
-	bot, _, _, requestService, _, _, _, buffer := newTestBot(t)
-	requestService.generateErr = errors.New("request generator failed")
+func TestHandleMessageSendsTaskStartedTextWhenChatCreatesTask(t *testing.T) {
+	bot, _, chatService, _, _, _, buffer := newTestBot(t)
+	chatService.result = chatapp.HandleTextResult{
+		SessionID:     "session-1",
+		CreatedTaskID: "task-1",
+	}
 
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 14,
 		From:      &User{ID: 1},
 		Chat:      Chat{ID: 100},
-		Text:      "画一个月下的少女",
+		Text:      "开始绘图",
 	})
 
-	if !strings.Contains(buffer.String(), "生成待确认 request 失败: request generator failed") {
-		t.Fatalf("expected request generation error, got %s", buffer.String())
-	}
-}
-
-func TestRequestConfirmCallbackCreatesTask(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-confirm",
-		From: User{ID: 1},
-		Message: &Message{
-			MessageID: 30,
-			Chat:      Chat{ID: 100},
-		},
-		Data: "request:confirm:session-1",
-	})
-
-	if len(taskService.commands) != 1 {
-		t.Fatalf("expected one create task command, got %d", len(taskService.commands))
-	}
-	if taskService.commands[0].UserID != "1" || taskService.commands[0].SessionID != "session-1" {
-		t.Fatalf("unexpected task command: %#v", taskService.commands[0])
-	}
-	if taskService.commands[0].Request != "draw a moonlit girl" {
-		t.Fatalf("unexpected task request: %q", taskService.commands[0].Request)
-	}
-	if taskService.commands[0].Context.Raw() != `{"version":1,"shape":"small-square"}` {
-		t.Fatalf("unexpected task context: %q", taskService.commands[0].Context.Raw())
-	}
-	if !strings.Contains(buffer.String(), `"text":"已开始执行"`) {
-		t.Fatalf("expected confirm callback acknowledgement, got %s", buffer.String())
-	}
-	if !strings.Contains(buffer.String(), `已确认 request`) {
-		t.Fatalf("expected confirmed request message edit, got %s", buffer.String())
-	}
-}
-
-func TestRequestReviseCallbackDoesNotCreateTask(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
-	bot.handleCallbackQuery(context.Background(), CallbackQuery{
-		ID:   "cb-revise",
-		From: User{ID: 1},
-		Message: &Message{
-			MessageID: 31,
-			Chat:      Chat{ID: 100},
-		},
-		Data: "request:revise:session-1",
-	})
-
-	if len(taskService.commands) != 0 {
-		t.Fatalf("expected no task creation, got %d", len(taskService.commands))
-	}
-	if !strings.Contains(buffer.String(), `"text":"继续修改"`) {
-		t.Fatalf("expected revise callback acknowledgement, got %s", buffer.String())
-	}
-	if !strings.Contains(buffer.String(), `已返回继续修改`) {
-		t.Fatalf("expected revise edit text, got %s", buffer.String())
+	if !strings.Contains(buffer.String(), `"text":"已开始绘图"`) {
+		t.Fatalf("expected task started text, got %s", buffer.String())
 	}
 }
 
 func TestHandleStopTaskCallbackStopsTaskAndEditsProgressMessage(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-stop",
 		From: User{ID: 1},
@@ -766,7 +665,7 @@ func TestHandleStopTaskCallbackStopsTaskAndEditsProgressMessage(t *testing.T) {
 }
 
 func TestHandleStopTaskCallbackReportsFailure(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.stopErr = errors.New("boom")
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
@@ -785,7 +684,7 @@ func TestHandleStopTaskCallbackReportsFailure(t *testing.T) {
 }
 
 func TestHandleTaskPromptCallbackSendsPromptMessage(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.prompt = "masterpiece, moonlit_girl"
 	taskService.promptSet = true
 
@@ -808,7 +707,7 @@ func TestHandleTaskPromptCallbackSendsPromptMessage(t *testing.T) {
 }
 
 func TestHandleRetryTranslateCallbackCreatesRetryTask(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-retry-translate",
@@ -832,7 +731,7 @@ func TestHandleRetryTranslateCallbackCreatesRetryTask(t *testing.T) {
 }
 
 func TestHandleRetryDrawCallbackCreatesRetryTask(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-retry-draw",
@@ -856,7 +755,7 @@ func TestHandleRetryDrawCallbackCreatesRetryTask(t *testing.T) {
 }
 
 func TestHandleTaskPromptCallbackReportsFailure(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.promptErr = errors.New("boom")
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
@@ -875,7 +774,7 @@ func TestHandleTaskPromptCallbackReportsFailure(t *testing.T) {
 }
 
 func TestHandleTaskPromptCallbackReportsEmptyPrompt(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.promptSet = true
 	taskService.prompt = "   "
 
@@ -895,7 +794,7 @@ func TestHandleTaskPromptCallbackReportsEmptyPrompt(t *testing.T) {
 }
 
 func TestHandleRetryTranslateCallbackReportsFailure(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.retryTranslateErr = errors.New("boom")
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
@@ -914,7 +813,7 @@ func TestHandleRetryTranslateCallbackReportsFailure(t *testing.T) {
 }
 
 func TestHandleRetryDrawCallbackReportsFailure(t *testing.T) {
-	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.retryDrawErr = errors.New("boom")
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{

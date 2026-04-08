@@ -8,7 +8,6 @@ import (
 	conversationapp "grimoire/internal/app/conversation"
 	preferencesapp "grimoire/internal/app/preferences"
 	recoveryapp "grimoire/internal/app/recovery"
-	requestapp "grimoire/internal/app/request"
 	runnerapp "grimoire/internal/app/runner"
 	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
@@ -18,7 +17,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if accessapp.NewService(nil) == nil {
 		t.Fatal("expected access service")
 	}
-	if chatapp.NewService(nil, nil, nil) == nil {
+	if chatapp.NewService(nil, nil, nil, nil) == nil {
 		t.Fatal("expected chat service")
 	}
 	if sessionapp.NewService(nil, nil, nil) == nil {
@@ -26,9 +25,6 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	}
 	if conversationapp.NewService(nil, nil, nil, nil, 15, nil, nil) == nil {
 		t.Fatal("expected conversation service")
-	}
-	if requestapp.NewService(nil, nil, nil, 15) == nil {
-		t.Fatal("expected request service")
 	}
 	if taskapp.NewService(nil, nil, nil, nil, nil) == nil {
 		t.Fatal("expected task service")

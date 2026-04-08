@@ -10,6 +10,7 @@ type HandleTextCommand struct {
 }
 
 type HandleTextResult struct {
-	SessionID string
-	Reply     string
+	SessionID     string
+	Reply         string
+	CreatedTaskID string
 }

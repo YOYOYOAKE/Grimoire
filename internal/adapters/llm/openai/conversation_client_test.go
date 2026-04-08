@@ -96,6 +96,18 @@ func TestConverseSendsStructuredPayload(t *testing.T) {
 	if !ok || preference["shape"] != string(domaindraw.ShapePortrait) {
 		t.Fatalf("unexpected preference payload: %#v", userPayload["preference"])
 	}
+	tools, ok := requestBody["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("unexpected tools payload: %#v", requestBody["tools"])
+	}
+	tool, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected tool payload: %#v", tools[0])
+	}
+	function, ok := tool["function"].(map[string]any)
+	if !ok || function["name"] != createDrawingTaskToolName {
+		t.Fatalf("unexpected tool function payload: %#v", tool["function"])
+	}
 }
 
 func TestConverseParsesSSEContent(t *testing.T) {
@@ -146,6 +158,136 @@ func TestConverseParsesRawSSEJSONFragments(t *testing.T) {
 		t.Fatalf("unexpected reply: %q", output.Reply)
 	}
 	if output.Summary.Content() != `{"goal":"castle"}` {
+		t.Fatalf("unexpected summary: %q", output.Summary.Content())
+	}
+}
+
+func TestParseCreateDrawingTaskOutput(t *testing.T) {
+	output, err := parseCreateDrawingTaskOutput(`{"request":"绘制月下城堡少女","summary":{"goal":"castle","ready":true}}`)
+	if err != nil {
+		t.Fatalf("parse create drawing task output: %v", err)
+	}
+	if output.CreateDrawingTask == nil {
+		t.Fatal("expected create drawing task output")
+	}
+	if output.CreateDrawingTask.Request != "绘制月下城堡少女" {
+		t.Fatalf("unexpected request: %q", output.CreateDrawingTask.Request)
+	}
+	if output.Summary.Content() != `{"goal":"castle","ready":true}` {
+		t.Fatalf("unexpected summary: %q", output.Summary.Content())
+	}
+	if output.Reply != "" {
+		t.Fatalf("expected empty reply, got %q", output.Reply)
+	}
+}
+
+func TestParseCreateDrawingTaskOutputRejectsMissingRequest(t *testing.T) {
+	if _, err := parseCreateDrawingTaskOutput(`{"summary":{"goal":"castle"}}`); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestParseCreateDrawingTaskOutputRejectsMissingSummary(t *testing.T) {
+	if _, err := parseCreateDrawingTaskOutput(`{"request":"绘制月下城堡少女"}`); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestConverseParsesToolCallResponse(t *testing.T) {
+	client := newTestConversationClient(t, nil, func(req *http.Request) (*http.Response, error) {
+		body := mustJSON(t, map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"tool_calls": []any{
+							map[string]any{
+								"function": map[string]any{
+									"name": createDrawingTaskToolName,
+									"arguments": mustJSON(t, map[string]any{
+										"request": "绘制月下城堡少女",
+										"summary": map[string]any{
+											"goal": "castle",
+											"ready": true,
+										},
+									}),
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		return newHTTPResponse(http.StatusOK, body), nil
+	})
+
+	output, err := client.Converse(context.Background(), newConversationInput(t))
+	if err != nil {
+		t.Fatalf("converse: %v", err)
+	}
+	if output.CreateDrawingTask == nil {
+		t.Fatal("expected create drawing task output")
+	}
+	if output.CreateDrawingTask.Request != "绘制月下城堡少女" {
+		t.Fatalf("unexpected request: %q", output.CreateDrawingTask.Request)
+	}
+	if output.Summary.Content() != `{"goal":"castle","ready":true}` {
+		t.Fatalf("unexpected summary: %q", output.Summary.Content())
+	}
+}
+
+func TestConverseParsesSSEToolCallResponse(t *testing.T) {
+	client := newTestConversationClient(t, nil, func(req *http.Request) (*http.Response, error) {
+		body := strings.Join([]string{
+			sseChunk(t, map[string]any{
+				"tool_calls": []any{
+					map[string]any{
+						"index": 0,
+						"function": map[string]any{
+							"name":      createDrawingTaskToolName,
+							"arguments": "{",
+						},
+					},
+				},
+			}),
+			"",
+			sseChunk(t, map[string]any{
+				"tool_calls": []any{
+					map[string]any{
+						"index": 0,
+						"function": map[string]any{
+							"arguments": `"request":"绘制月下城堡少女",`,
+						},
+					},
+				},
+			}),
+			"",
+			sseChunk(t, map[string]any{
+				"tool_calls": []any{
+					map[string]any{
+						"index": 0,
+						"function": map[string]any{
+							"arguments": `"summary":{"goal":"castle","ready":true}}`,
+						},
+					},
+				},
+			}),
+			"",
+			"data: [DONE]",
+		}, "\n")
+		return newHTTPResponse(http.StatusOK, body), nil
+	})
+
+	output, err := client.Converse(context.Background(), newConversationInput(t))
+	if err != nil {
+		t.Fatalf("converse: %v", err)
+	}
+	if output.CreateDrawingTask == nil {
+		t.Fatal("expected create drawing task output")
+	}
+	if output.CreateDrawingTask.Request != "绘制月下城堡少女" {
+		t.Fatalf("unexpected request: %q", output.CreateDrawingTask.Request)
+	}
+	if output.Summary.Content() != `{"goal":"castle","ready":true}` {
 		t.Fatalf("unexpected summary: %q", output.Summary.Content())
 	}
 }

@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	accessapp "grimoire/internal/app/access"
+	chatapp "grimoire/internal/app/chat"
 	conversationapp "grimoire/internal/app/conversation"
 	recoveryapp "grimoire/internal/app/recovery"
-	requestapp "grimoire/internal/app/request"
 	runnerapp "grimoire/internal/app/runner"
 	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
@@ -81,16 +81,22 @@ func (schedulerStub) Enqueue(string) error {
 	return nil
 }
 
+type chatTaskServiceStub struct{}
+
+func (chatTaskServiceStub) Create(context.Context, taskapp.CreateCommand) (domaintask.Task, error) {
+	return domaintask.Task{}, nil
+}
+
+type chatConversationServiceStub struct{}
+
+func (chatConversationServiceStub) Converse(context.Context, conversationapp.ConverseCommand) (conversationapp.ConverseResult, error) {
+	return conversationapp.ConverseResult{}, nil
+}
+
 type conversationModelStub struct{}
 
 func (conversationModelStub) Converse(context.Context, conversationapp.ConversationInput) (conversationapp.ConversationOutput, error) {
 	return conversationapp.ConversationOutput{}, nil
-}
-
-type requestGeneratorStub struct{}
-
-func (requestGeneratorStub) Generate(context.Context, requestapp.GenerateInput) (string, error) {
-	return "", nil
 }
 
 type promptTranslatorStub struct{}
@@ -131,14 +137,16 @@ func (notifierStub) DeleteMessage(context.Context, string, string) error {
 
 func TestPortStubsSatisfyContracts(t *testing.T) {
 	var _ accessapp.UserRepository = userRepositoryStub{}
+	var _ chatapp.UserRepository = userRepositoryStub{}
+	var _ chatapp.SessionService = sessionapp.NewService(nil, nil, nil)
+	var _ chatapp.ConversationService = chatConversationServiceStub{}
+	var _ chatapp.TaskService = chatTaskServiceStub{}
 	var _ sessionapp.SessionRepository = sessionRepositoryStub{}
 	var _ sessionapp.SessionMessageRepository = sessionMessageRepositoryStub{}
 	var _ sessionapp.TxRunner = txRunnerStub{}
 	var _ conversationapp.SessionRepository = sessionRepositoryStub{}
 	var _ conversationapp.SessionMessageRepository = sessionMessageRepositoryStub{}
 	var _ conversationapp.TxRunner = txRunnerStub{}
-	var _ requestapp.SessionRepository = sessionRepositoryStub{}
-	var _ requestapp.SessionMessageRepository = sessionMessageRepositoryStub{}
 	var _ taskapp.TaskRepository = taskRepositoryStub{}
 	var _ taskapp.TxRunner = txRunnerStub{}
 	var _ taskapp.Scheduler = schedulerStub{}
@@ -147,7 +155,6 @@ func TestPortStubsSatisfyContracts(t *testing.T) {
 	var _ recoveryapp.TaskRepository = taskRepositoryStub{}
 	var _ recoveryapp.Scheduler = schedulerStub{}
 	var _ conversationapp.ConversationModel = conversationModelStub{}
-	var _ requestapp.RequestGenerator = requestGeneratorStub{}
 	var _ runnerapp.PromptTranslator = promptTranslatorStub{}
 	var _ runnerapp.ImageGenerator = imageGeneratorStub{}
 	var _ runnerapp.ImageStore = imageStoreStub{}

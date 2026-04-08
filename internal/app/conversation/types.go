@@ -11,6 +11,7 @@ type ConverseCommand struct {
 }
 
 type ConverseResult struct {
-	Reply   string
-	Summary domainsession.Summary
+	Reply             string
+	Summary           domainsession.Summary
+	CreateDrawingTask *CreateDrawingTask
 }

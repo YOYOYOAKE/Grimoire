@@ -148,6 +148,9 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	if result.Reply != "hi there" {
 		t.Fatalf("unexpected reply: %q", result.Reply)
 	}
+	if result.CreateDrawingTask != nil {
+		t.Fatalf("expected no create drawing task, got %#v", result.CreateDrawingTask)
+	}
 	if result.Summary.Content() != `{"topic":"moon","step":"confirmed"}` {
 		t.Fatalf("unexpected summary: %q", result.Summary.Content())
 	}
@@ -201,6 +204,45 @@ func TestConverseReloadsLatestSessionBeforePersisting(t *testing.T) {
 	}
 }
 
+func TestConversePersistsSummaryWithoutAssistantReplyWhenCreatingTask(t *testing.T) {
+	latestSession := mustSession(t, "session-1", "user-1", 1, domainsession.NewSummary(`{"topic":"moon"}`))
+	sessions := &conversationSessionRepositoryStub{
+		getSessions: []domainsession.Session{latestSession, latestSession},
+	}
+	messages := &conversationMessageRepositoryStub{}
+	txRunner := &conversationTxRunnerStub{}
+	model := &conversationModelStub{
+		output: ConversationOutput{
+			Summary:           domainsession.NewSummary(`{"topic":"moon","step":"ready"}`),
+			CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
+		},
+	}
+	service := NewService(model, sessions, messages, txRunner, 15, func() time.Time { return time.Unix(2, 0).UTC() }, func() string { return "assistant-1" })
+
+	result, err := service.Converse(context.Background(), ConverseCommand{
+		SessionID:  "session-1",
+		Preference: domainpreferences.DefaultPreference(),
+	})
+	if err != nil {
+		t.Fatalf("converse: %v", err)
+	}
+	if result.Reply != "" {
+		t.Fatalf("expected empty reply, got %q", result.Reply)
+	}
+	if result.CreateDrawingTask == nil || result.CreateDrawingTask.Request != "draw a moonlit girl" {
+		t.Fatalf("unexpected create drawing task: %#v", result.CreateDrawingTask)
+	}
+	if len(messages.appended) != 0 {
+		t.Fatalf("expected no assistant messages, got %#v", messages.appended)
+	}
+	if sessions.savedSession.Length != 1 {
+		t.Fatalf("expected session length unchanged, got %d", sessions.savedSession.Length)
+	}
+	if sessions.savedSession.Summary.Content() != `{"topic":"moon","step":"ready"}` {
+		t.Fatalf("unexpected saved summary: %q", sessions.savedSession.Summary.Content())
+	}
+}
+
 func TestConverseReturnsModelErrorWithoutOpeningTransaction(t *testing.T) {
 	session := mustSession(t, "session-1", "user-1", 0, domainsession.EmptySummary())
 	modelErr := errors.New("llm unavailable")
@@ -224,6 +266,32 @@ func TestConverseReturnsModelErrorWithoutOpeningTransaction(t *testing.T) {
 	}
 	if txRunner.calls != 0 {
 		t.Fatalf("expected no transaction for model failure, got %d", txRunner.calls)
+	}
+}
+
+func TestConverseRejectsReplyAndCreateDrawingTaskTogether(t *testing.T) {
+	session := mustSession(t, "session-1", "user-1", 0, domainsession.EmptySummary())
+	service := NewService(
+		&conversationModelStub{
+			output: ConversationOutput{
+				Reply:             "reply",
+				Summary:           domainsession.NewSummary(`{"topic":"moon"}`),
+				CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
+			},
+		},
+		&conversationSessionRepositoryStub{getSessions: []domainsession.Session{session}},
+		&conversationMessageRepositoryStub{},
+		&conversationTxRunnerStub{},
+		10,
+		nil,
+		nil,
+	)
+
+	if _, err := service.Converse(context.Background(), ConverseCommand{
+		SessionID:  "session-1",
+		Preference: domainpreferences.DefaultPreference(),
+	}); err == nil {
+		t.Fatal("expected error")
 	}
 }
 

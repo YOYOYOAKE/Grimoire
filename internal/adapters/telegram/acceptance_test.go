@@ -16,7 +16,6 @@ import (
 	chatapp "grimoire/internal/app/chat"
 	conversationapp "grimoire/internal/app/conversation"
 	preferencesapp "grimoire/internal/app/preferences"
-	requestapp "grimoire/internal/app/request"
 	runnerapp "grimoire/internal/app/runner"
 	sessionapp "grimoire/internal/app/session"
 	taskapp "grimoire/internal/app/task"
@@ -30,13 +29,22 @@ import (
 )
 
 type acceptanceConversationModelStub struct {
-	output conversationapp.ConversationOutput
-	input  conversationapp.ConversationInput
+	outputs   []conversationapp.ConversationOutput
+	inputs    []conversationapp.ConversationInput
+	callCount int
 }
 
 func (s *acceptanceConversationModelStub) Converse(_ context.Context, input conversationapp.ConversationInput) (conversationapp.ConversationOutput, error) {
-	s.input = input
-	return s.output, nil
+	s.inputs = append(s.inputs, input)
+	if len(s.outputs) == 0 {
+		return conversationapp.ConversationOutput{}, nil
+	}
+	index := s.callCount
+	if index >= len(s.outputs) {
+		index = len(s.outputs) - 1
+	}
+	s.callCount++
+	return s.outputs[index], nil
 }
 
 type acceptanceTranslatorStub struct {
@@ -93,7 +101,6 @@ type acceptanceHarness struct {
 	taskService      *taskapp.Service
 	runnerService    *runnerapp.Service
 	scheduler        *telegramSchedulerStub
-	requestGenerator *telegramRequestGeneratorStub
 	notifier         *acceptanceNotifier
 }
 
@@ -105,27 +112,27 @@ func TestAcceptanceChatConfirmRunPromptAndRetryFlow(t *testing.T) {
 		MessageID: 10,
 		From:      &User{ID: 1},
 		Chat:      Chat{ID: 100},
-		Text:      "画一个月下的少女，补一点夜景氛围",
+		Text:      "请整理成 request",
 	})
 
 	logOutput := harness.buffer.String()
-	if !strings.Contains(logOutput, "需要补充一点光线方向。") {
+	if !strings.Contains(logOutput, "绘制一位月下少女，夜景氛围，纵向构图。") {
 		t.Fatalf("expected chat reply in output, got %s", logOutput)
 	}
-	if !strings.Contains(logOutput, "待确认 request") {
-		t.Fatalf("expected pending request in output, got %s", logOutput)
+	if len(harness.scheduler.taskIDs) != 0 {
+		t.Fatalf("expected no queued task before confirmation, got %#v", harness.scheduler.taskIDs)
 	}
 
-	harness.bot.handleCallbackQuery(ctx, CallbackQuery{
-		ID:   "cb-confirm-acceptance",
-		From: User{ID: 1},
-		Message: &Message{
-			MessageID: 20,
-			Chat:      Chat{ID: 100},
-		},
-		Data: "request:confirm:session-1",
+	harness.bot.handleMessage(ctx, Message{
+		MessageID: 20,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "开始绘图",
 	})
 
+	if !strings.Contains(harness.buffer.String(), "已开始绘图") {
+		t.Fatalf("expected task started text in output, got %s", harness.buffer.String())
+	}
 	if len(harness.scheduler.taskIDs) != 1 {
 		t.Fatalf("expected one queued task, got %#v", harness.scheduler.taskIDs)
 	}
@@ -207,16 +214,13 @@ func TestAcceptanceStopFlow(t *testing.T) {
 		MessageID: 11,
 		From:      &User{ID: 1},
 		Chat:      Chat{ID: 100},
-		Text:      "画一个准备停止的任务",
+		Text:      "请整理成 request",
 	})
-	harness.bot.handleCallbackQuery(ctx, CallbackQuery{
-		ID:   "cb-confirm-stop-flow",
-		From: User{ID: 1},
-		Message: &Message{
-			MessageID: 23,
-			Chat:      Chat{ID: 100},
-		},
-		Data: "request:confirm:session-1",
+	harness.bot.handleMessage(ctx, Message{
+		MessageID: 12,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "开始绘图",
 	})
 
 	if len(harness.scheduler.taskIDs) != 1 {
@@ -259,7 +263,7 @@ func TestAcceptanceStopFlow(t *testing.T) {
 func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 	t.Helper()
 
-	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, _, buffer := newTestBot(t)
 	db := sqlitefixture.OpenDB(t)
 	preference, err := domainpreferences.New(domaindraw.ShapePortrait, "artist:foo")
 	if err != nil {
@@ -274,13 +278,22 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 	txRunner := sqliterepo.NewTxRunner(db)
 
 	sessionService := sessionapp.NewService(sessionRepo, messageRepo, txRunner)
-	conversationService := conversationapp.NewService(
-		&acceptanceConversationModelStub{
-			output: conversationapp.ConversationOutput{
-				Reply:   "需要补充一点光线方向。",
-				Summary: domainsession.NewSummary(`{"topic":"moon","step":"clarified"}`),
+	model := &acceptanceConversationModelStub{
+		outputs: []conversationapp.ConversationOutput{
+			{
+				Reply:   "绘制一位月下少女，夜景氛围，纵向构图。",
+				Summary: domainsession.NewSummary(`{"topic":"moon","request_ready":true}`),
+			},
+			{
+				Summary: domainsession.NewSummary(`{"topic":"moon","request_ready":true,"started":true}`),
+				CreateDrawingTask: &conversationapp.CreateDrawingTask{
+					Request: "绘制一位月下少女，夜景氛围，纵向构图。",
+				},
 			},
 		},
+	}
+	conversationService := conversationapp.NewService(
+		model,
 		sessionRepo,
 		messageRepo,
 		txRunner,
@@ -288,8 +301,6 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 		func() time.Time { return time.Unix(2, 0).UTC() },
 		func() string { return "assistant-msg-1" },
 	)
-	chatService := chatapp.NewService(userRepo, sessionService, conversationService)
-	requestGenerator := &telegramRequestGeneratorStub{output: "draw a moonlit girl"}
 	scheduler := &telegramSchedulerStub{}
 	taskIndex := 0
 	taskService := taskapp.NewService(
@@ -302,6 +313,7 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 			return fmt.Sprintf("task-%d", taskIndex)
 		},
 	)
+	chatService := chatapp.NewService(userRepo, sessionService, conversationService, taskService)
 
 	rootDir := t.TempDir()
 	imageStore, err := localstore.NewImageStore(platformdb.SQLiteLayout{
@@ -325,7 +337,6 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 	bot.SetAccessService(accessapp.NewService(userRepo))
 	bot.SetPreferenceService(preferencesapp.NewService(userRepo))
 	bot.SetChatService(chatService)
-	bot.SetRequestService(requestapp.NewService(requestGenerator, sessionRepo, messageRepo, 15))
 	bot.SetTaskService(taskService)
 	bot.SetBalanceService(&balanceServiceMock{})
 
@@ -337,7 +348,6 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 		taskService:      taskService,
 		runnerService:    runnerService,
 		scheduler:        scheduler,
-		requestGenerator: requestGenerator,
 		notifier:         notifier,
 	}
 }

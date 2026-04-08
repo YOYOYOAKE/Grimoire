@@ -13,17 +13,20 @@ type Service struct {
 	users         UserRepository
 	sessions      SessionService
 	conversations ConversationService
+	tasks         TaskService
 }
 
 func NewService(
 	users UserRepository,
 	sessions SessionService,
 	conversations ConversationService,
+	tasks TaskService,
 ) *Service {
 	return &Service{
 		users:         users,
 		sessions:      sessions,
 		conversations: conversations,
+		tasks:         tasks,
 	}
 }
 
@@ -69,6 +72,30 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 	})
 	if err != nil {
 		return HandleTextResult{}, err
+	}
+
+	if result.CreateDrawingTask != nil {
+		if s.tasks == nil {
+			return HandleTextResult{}, fmt.Errorf("task service is required")
+		}
+
+		taskContext, err := buildTaskContext(user.Preference)
+		if err != nil {
+			return HandleTextResult{}, err
+		}
+		task, err := s.tasks.Create(ctx, taskCreateCommand(
+			userID,
+			currentSession.ID,
+			result.CreateDrawingTask.Request,
+			taskContext,
+		))
+		if err != nil {
+			return HandleTextResult{}, err
+		}
+		return HandleTextResult{
+			SessionID:     currentSession.ID,
+			CreatedTaskID: task.ID,
+		}, nil
 	}
 
 	return HandleTextResult{

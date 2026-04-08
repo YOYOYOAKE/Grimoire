@@ -27,9 +27,14 @@ type ConversationInput struct {
 	Preference domainpreferences.Preference
 }
 
+type CreateDrawingTask struct {
+	Request string
+}
+
 type ConversationOutput struct {
-	Reply   string
-	Summary domainsession.Summary
+	Reply             string
+	Summary           domainsession.Summary
+	CreateDrawingTask *CreateDrawingTask
 }
 
 type ConversationModel interface {

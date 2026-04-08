@@ -8,9 +8,11 @@ import (
 
 	conversationapp "grimoire/internal/app/conversation"
 	sessionapp "grimoire/internal/app/session"
+	taskapp "grimoire/internal/app/task"
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domainsession "grimoire/internal/domain/session"
+	domaintask "grimoire/internal/domain/task"
 	domainuser "grimoire/internal/domain/user"
 )
 
@@ -70,6 +72,25 @@ func (s *chatConversationServiceStub) Converse(_ context.Context, command conver
 	return s.result, nil
 }
 
+type chatTaskServiceStub struct {
+	got       taskapp.CreateCommand
+	callCount int
+	result    domaintask.Task
+	err       error
+}
+
+func (s *chatTaskServiceStub) Create(_ context.Context, command taskapp.CreateCommand) (domaintask.Task, error) {
+	s.got = command
+	s.callCount++
+	if s.err != nil {
+		return domaintask.Task{}, s.err
+	}
+	if s.result.ID == "" {
+		s.result = domaintask.Task{ID: "task-1"}
+	}
+	return s.result, nil
+}
+
 func TestHandleTextGetsSessionAppendsMessageAndConverse(t *testing.T) {
 	preference, err := domainpreferences.New(domaindraw.ShapePortrait, "artist:foo")
 	if err != nil {
@@ -89,7 +110,7 @@ func TestHandleTextGetsSessionAppendsMessageAndConverse(t *testing.T) {
 	conversations := &chatConversationServiceStub{
 		result: conversationapp.ConverseResult{Reply: "需要补充一下光线方向。"},
 	}
-	service := NewService(users, sessions, conversations)
+	service := NewService(users, sessions, conversations, &chatTaskServiceStub{})
 	createdAt := time.Unix(10, 0).UTC()
 
 	result, err := service.HandleText(context.Background(), HandleTextCommand{
@@ -135,6 +156,9 @@ func TestHandleTextGetsSessionAppendsMessageAndConverse(t *testing.T) {
 	if result.Reply != "需要补充一下光线方向。" {
 		t.Fatalf("unexpected reply: %q", result.Reply)
 	}
+	if result.CreatedTaskID != "" {
+		t.Fatalf("expected no created task id, got %q", result.CreatedTaskID)
+	}
 }
 
 func TestHandleTextReturnsAppendErrorWithoutCallingConversation(t *testing.T) {
@@ -146,6 +170,7 @@ func TestHandleTextReturnsAppendErrorWithoutCallingConversation(t *testing.T) {
 		&chatUserRepositoryStub{user: user},
 		&chatSessionServiceStub{session: session, appendErr: appendErr},
 		conversations,
+		&chatTaskServiceStub{},
 	)
 
 	_, err := service.HandleText(context.Background(), HandleTextCommand{
@@ -163,7 +188,7 @@ func TestHandleTextReturnsAppendErrorWithoutCallingConversation(t *testing.T) {
 }
 
 func TestHandleTextRejectsInvalidCommand(t *testing.T) {
-	service := NewService(nil, nil, nil)
+	service := NewService(nil, nil, nil, nil)
 
 	tests := []HandleTextCommand{
 		{MessageID: "msg-1", Text: "hello", CreatedAt: time.Unix(1, 0).UTC()},
@@ -176,6 +201,85 @@ func TestHandleTextRejectsInvalidCommand(t *testing.T) {
 		if _, err := service.HandleText(context.Background(), command); err == nil {
 			t.Fatalf("expected validation error for command %#v", command)
 		}
+	}
+}
+
+func TestHandleTextCreatesTaskWhenConversationRequestsDrawing(t *testing.T) {
+	preference, err := domainpreferences.New(domaindraw.ShapeSquare, "artist:foo")
+	if err != nil {
+		t.Fatalf("new preference: %v", err)
+	}
+	user, err := domainuser.New("user-1", domainuser.RoleNormal, preference)
+	if err != nil {
+		t.Fatalf("new user: %v", err)
+	}
+	session := newChatTestSession(t, "session-1", "user-1")
+	tasks := &chatTaskServiceStub{}
+	service := NewService(
+		&chatUserRepositoryStub{user: user},
+		&chatSessionServiceStub{session: session},
+		&chatConversationServiceStub{
+			result: conversationapp.ConverseResult{
+				Summary:           domainsession.NewSummary(`{"topic":"moon","step":"draw"}`),
+				CreateDrawingTask: &conversationapp.CreateDrawingTask{Request: "draw a moonlit girl"},
+			},
+		},
+		tasks,
+	)
+
+	result, err := service.HandleText(context.Background(), HandleTextCommand{
+		UserID:    "user-1",
+		MessageID: "msg-1",
+		Text:      "开始绘图",
+		CreatedAt: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("handle text: %v", err)
+	}
+	if result.Reply != "" {
+		t.Fatalf("expected empty reply, got %q", result.Reply)
+	}
+	if result.CreatedTaskID != "task-1" {
+		t.Fatalf("unexpected created task id: %q", result.CreatedTaskID)
+	}
+	if tasks.callCount != 1 {
+		t.Fatalf("expected one task create call, got %d", tasks.callCount)
+	}
+	if tasks.got.UserID != "user-1" || tasks.got.SessionID != "session-1" {
+		t.Fatalf("unexpected task create command: %#v", tasks.got)
+	}
+	if tasks.got.Request != "draw a moonlit girl" {
+		t.Fatalf("unexpected task request: %q", tasks.got.Request)
+	}
+	if tasks.got.Context.Raw() != `{"version":1,"shape":"square","artists":"artist:foo"}` {
+		t.Fatalf("unexpected task context: %q", tasks.got.Context.Raw())
+	}
+}
+
+func TestHandleTextReturnsTaskCreateError(t *testing.T) {
+	user := newChatTestUser(t, "user-1")
+	session := newChatTestSession(t, "session-1", "user-1")
+	createErr := errors.New("create failed")
+	service := NewService(
+		&chatUserRepositoryStub{user: user},
+		&chatSessionServiceStub{session: session},
+		&chatConversationServiceStub{
+			result: conversationapp.ConverseResult{
+				Summary:           domainsession.NewSummary(`{"topic":"moon"}`),
+				CreateDrawingTask: &conversationapp.CreateDrawingTask{Request: "draw a moonlit girl"},
+			},
+		},
+		&chatTaskServiceStub{err: createErr},
+	)
+
+	_, err := service.HandleText(context.Background(), HandleTextCommand{
+		UserID:    "user-1",
+		MessageID: "msg-1",
+		Text:      "开始绘图",
+		CreatedAt: time.Unix(1, 0).UTC(),
+	})
+	if !errors.Is(err, createErr) {
+		t.Fatalf("expected task create error, got %v", err)
 	}
 }
 

@@ -10,7 +10,6 @@ import (
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	preferencesapp "grimoire/internal/app/preferences"
-	requestapp "grimoire/internal/app/request"
 	taskapp "grimoire/internal/app/task"
 	"grimoire/internal/config"
 	domainnai "grimoire/internal/domain/nai"
@@ -27,11 +26,6 @@ type ChatService interface {
 
 type AccessService interface {
 	Check(ctx context.Context, command accessapp.CheckCommand) (accessapp.Decision, error)
-}
-
-type RequestService interface {
-	Generate(ctx context.Context, command requestapp.GenerateCommand) (requestapp.PendingRequest, error)
-	ResolveDecision(command requestapp.ResolveDecisionCommand) requestapp.Decision
 }
 
 type TaskService interface {
@@ -60,7 +54,6 @@ type Bot struct {
 	updateOffset      int64
 	accessService     AccessService
 	chatService       ChatService
-	requestService    RequestService
 	taskService       TaskService
 	preferenceService PreferenceService
 	balanceService    BalanceService
@@ -84,10 +77,6 @@ func (b *Bot) SetChatService(service ChatService) {
 
 func (b *Bot) SetAccessService(service AccessService) {
 	b.accessService = service
-}
-
-func (b *Bot) SetRequestService(service RequestService) {
-	b.requestService = service
 }
 
 func (b *Bot) SetTaskService(service TaskService) {

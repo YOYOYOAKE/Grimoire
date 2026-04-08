@@ -85,10 +85,21 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	}
 
 	reply := strings.TrimSpace(output.Reply)
-	if reply == "" {
-		return ConverseResult{}, fmt.Errorf("conversation reply is required")
-	}
 	summary := domainsession.NewSummary(output.Summary.Content())
+	var createDrawingTask *CreateDrawingTask
+	if output.CreateDrawingTask != nil {
+		request := strings.TrimSpace(output.CreateDrawingTask.Request)
+		if request == "" {
+			return ConverseResult{}, fmt.Errorf("conversation create drawing task request is required")
+		}
+		createDrawingTask = &CreateDrawingTask{Request: request}
+	}
+	switch {
+	case reply == "" && createDrawingTask == nil:
+		return ConverseResult{}, fmt.Errorf("conversation reply or create drawing task is required")
+	case reply != "" && createDrawingTask != nil:
+		return ConverseResult{}, fmt.Errorf("conversation reply and create drawing task are mutually exclusive")
+	}
 
 	err = s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
 		latestSession, err := s.sessions.Get(txCtx, sessionID)
@@ -96,23 +107,25 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 			return err
 		}
 
-		message, err := domainsession.NewMessage(
-			s.idGenerator(),
-			latestSession.ID,
-			domainsession.MessageRoleAssistant,
-			reply,
-			s.now(),
-		)
-		if err != nil {
-			return err
-		}
-		if err := latestSession.RecordMessage(message); err != nil {
-			return err
-		}
 		latestSession.UpdateSummary(summary)
 
-		if err := s.messages.Append(txCtx, message); err != nil {
-			return err
+		if reply != "" {
+			message, err := domainsession.NewMessage(
+				s.idGenerator(),
+				latestSession.ID,
+				domainsession.MessageRoleAssistant,
+				reply,
+				s.now(),
+			)
+			if err != nil {
+				return err
+			}
+			if err := latestSession.RecordMessage(message); err != nil {
+				return err
+			}
+			if err := s.messages.Append(txCtx, message); err != nil {
+				return err
+			}
 		}
 		if err := s.sessions.Save(txCtx, latestSession); err != nil {
 			return err
@@ -124,7 +137,8 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	}
 
 	return ConverseResult{
-		Reply:   reply,
-		Summary: summary,
+		Reply:             reply,
+		Summary:           summary,
+		CreateDrawingTask: createDrawingTask,
 	}, nil
 }

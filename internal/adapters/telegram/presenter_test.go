@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	requestapp "grimoire/internal/app/request"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -66,33 +65,9 @@ func TestBuildBalanceText(t *testing.T) {
 	}
 }
 
-func TestBuildPendingRequestTextAndMarkup(t *testing.T) {
-	pending := requestapp.PendingRequest{
-		Request: "draw a moonlit girl",
-		ConfirmAction: requestapp.Action{
-			CallbackData: "request:confirm:session-1",
-		},
-		ReviseAction: requestapp.Action{
-			CallbackData: "request:revise:session-1",
-		},
-	}
-
-	text := buildPendingRequestText(pending.Request)
-	for _, expected := range []string{"待确认 request", "draw a moonlit girl", "请确认执行"} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("expected %q in text, got %s", expected, text)
-		}
-	}
-
-	markup := requestDecisionMarkup(pending)
-	if len(markup.InlineKeyboard) != 1 || len(markup.InlineKeyboard[0]) != 2 {
-		t.Fatalf("unexpected request markup: %#v", markup)
-	}
-	if markup.InlineKeyboard[0][0].CallbackData != "request:confirm:session-1" {
-		t.Fatalf("unexpected confirm callback: %#v", markup.InlineKeyboard[0][0])
-	}
-	if markup.InlineKeyboard[0][1].CallbackData != "request:revise:session-1" {
-		t.Fatalf("unexpected revise callback: %#v", markup.InlineKeyboard[0][1])
+func TestBuildTaskStartedText(t *testing.T) {
+	if text := buildTaskStartedText(); text != "已开始绘图" {
+		t.Fatalf("unexpected task started text: %q", text)
 	}
 }
 
