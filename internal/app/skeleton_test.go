@@ -39,7 +39,7 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if recoveryapp.NewService(nil, nil) == nil {
 		t.Fatal("expected recovery service")
 	}
-	if preferencesapp.NewService(nil, "") == nil {
+	if preferencesapp.NewService(nil) == nil {
 		t.Fatal("expected preferences service")
 	}
 }

@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
+	preferencesapp "grimoire/internal/app/preferences"
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
@@ -38,6 +40,20 @@ func (m *chatServiceMock) HandleText(_ context.Context, command chatapp.HandleTe
 	return m.result, nil
 }
 
+type accessServiceMock struct {
+	commands []accessapp.CheckCommand
+	decision accessapp.Decision
+	err      error
+}
+
+func (m *accessServiceMock) Check(_ context.Context, command accessapp.CheckCommand) (accessapp.Decision, error) {
+	m.commands = append(m.commands, command)
+	if m.err != nil {
+		return accessapp.Decision{}, m.err
+	}
+	return m.decision, nil
+}
+
 type preferenceServiceMock struct {
 	pref domainpreferences.Preference
 }
@@ -47,26 +63,26 @@ type balanceServiceMock struct {
 	err     error
 }
 
-func (m *preferenceServiceMock) Get(context.Context) (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) Get(_ context.Context, _ preferencesapp.GetCommand) (domainpreferences.Preference, error) {
 	if !m.pref.Shape.Valid() {
 		m.pref = domainpreferences.DefaultPreference()
 	}
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) UpdateShape(_ context.Context, shape domaindraw.Shape) (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) UpdateShape(_ context.Context, command preferencesapp.UpdateShapeCommand) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
-	m.pref.Shape = shape
+	m.pref.Shape = command.Shape
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) UpdateArtists(_ context.Context, artist string) (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) UpdateArtists(_ context.Context, command preferencesapp.UpdateArtistsCommand) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
-	m.pref.Artists = strings.TrimSpace(artist)
+	m.pref.Artists = strings.TrimSpace(command.Artists)
 	return m.pref, nil
 }
 
-func (m *preferenceServiceMock) ClearArtists(context.Context) (domainpreferences.Preference, error) {
+func (m *preferenceServiceMock) ClearArtists(context.Context, preferencesapp.ClearArtistsCommand) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
 	return m.pref, nil
 }
@@ -78,7 +94,7 @@ func (m *balanceServiceMock) GetBalance(_ context.Context) (domainnai.AccountBal
 	return m.balance, nil
 }
 
-func newTestBot(t *testing.T) (*Bot, *chatServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
+func newTestBot(t *testing.T) (*Bot, *accessServiceMock, *chatServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
 	t.Helper()
 	buffer := &bytes.Buffer{}
 	bot := NewBot(config.Config{
@@ -109,6 +125,7 @@ func newTestBot(t *testing.T) (*Bot, *chatServiceMock, *preferenceServiceMock, *
 		}),
 	}
 
+	accessService := &accessServiceMock{decision: accessapp.Decision{Allowed: true}}
 	chatService := &chatServiceMock{}
 	prefService := &preferenceServiceMock{}
 	balanceService := &balanceServiceMock{
@@ -120,14 +137,15 @@ func newTestBot(t *testing.T) (*Bot, *chatServiceMock, *preferenceServiceMock, *
 			SubscriptionActive:     true,
 		},
 	}
+	bot.SetAccessService(accessService)
 	bot.SetChatService(chatService)
 	bot.SetPreferenceService(prefService)
 	bot.SetBalanceService(balanceService)
-	return bot, chatService, prefService, balanceService, buffer
+	return bot, accessService, chatService, prefService, balanceService, buffer
 }
 
 func TestHandleMessageUsesChatService(t *testing.T) {
-	bot, chatService, _, _, buffer := newTestBot(t)
+	bot, accessService, chatService, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 10,
 		From:      &User{ID: 1},
@@ -137,6 +155,9 @@ func TestHandleMessageUsesChatService(t *testing.T) {
 
 	if len(chatService.commands) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(chatService.commands))
+	}
+	if len(accessService.commands) != 1 || accessService.commands[0].TelegramID != "1" {
+		t.Fatalf("unexpected access commands: %#v", accessService.commands)
 	}
 	if chatService.commands[0].UserID != "1" {
 		t.Fatalf("unexpected user id: %q", chatService.commands[0].UserID)
@@ -156,7 +177,7 @@ func TestHandleMessageUsesChatService(t *testing.T) {
 }
 
 func TestRouteUpdateDispatchesMessage(t *testing.T) {
-	bot, chatService, _, _, _ := newTestBot(t)
+	bot, _, chatService, _, _, _ := newTestBot(t)
 	bot.routeUpdate(context.Background(), Update{
 		Message: &Message{
 			MessageID: 10,
@@ -172,7 +193,7 @@ func TestRouteUpdateDispatchesMessage(t *testing.T) {
 }
 
 func TestHandleMessageSendsErrorWhenChatServiceFails(t *testing.T) {
-	bot, chatService, _, _, buffer := newTestBot(t)
+	bot, _, chatService, _, _, buffer := newTestBot(t)
 	chatService.err = errors.New("boom")
 
 	bot.handleMessage(context.Background(), Message{
@@ -188,7 +209,7 @@ func TestHandleMessageSendsErrorWhenChatServiceFails(t *testing.T) {
 }
 
 func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
-	bot, chatService, _, _, buffer := newTestBot(t)
+	bot, _, chatService, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 10,
 		From:      &User{ID: 1},
@@ -205,7 +226,7 @@ func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
 }
 
 func TestImgCallbackUpdatesShape(t *testing.T) {
-	bot, _, prefService, _, buffer := newTestBot(t)
+	bot, _, _, prefService, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-1",
 		From: User{ID: 1},
@@ -225,7 +246,7 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 }
 
 func TestHandleCallbackQueryRejectsInvalidData(t *testing.T) {
-	bot, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-invalid",
 		From: User{ID: 1},
@@ -246,7 +267,7 @@ func TestHandleCallbackQueryRejectsInvalidData(t *testing.T) {
 }
 
 func TestPendingArtistFlow(t *testing.T) {
-	bot, _, prefService, _, _ := newTestBot(t)
+	bot, _, _, prefService, _, _ := newTestBot(t)
 	bot.setPendingArtists()
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 11,
@@ -279,7 +300,7 @@ func TestResultMessageHasNoRetryButtons(t *testing.T) {
 }
 
 func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
-	bot, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.SendPhoto(context.Background(), 100, 20, "task.png", "", []byte("png")); err != nil {
 		t.Fatalf("send photo: %v", err)
@@ -298,7 +319,7 @@ func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
 }
 
 func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
-	bot, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.DeleteMessage(context.Background(), 100, 20); err != nil {
 		t.Fatalf("delete message: %v", err)
@@ -314,7 +335,7 @@ func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
 }
 
 func TestHandleBalanceCommandSendsBalance(t *testing.T) {
-	bot, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 12,
 		From:      &User{ID: 1},
@@ -338,7 +359,7 @@ func TestHandleBalanceCommandSendsBalance(t *testing.T) {
 }
 
 func TestHandleBalanceCommandSendsError(t *testing.T) {
-	bot, _, _, balanceService, buffer := newTestBot(t)
+	bot, _, _, _, balanceService, buffer := newTestBot(t)
 	balanceService.err = errors.New("boom")
 
 	bot.handleMessage(context.Background(), Message{
@@ -354,7 +375,7 @@ func TestHandleBalanceCommandSendsError(t *testing.T) {
 }
 
 func TestSetMyCommandsIncludesBalance(t *testing.T) {
-	bot, _, _, _, buffer := newTestBot(t)
+	bot, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.setMyCommands(context.Background()); err != nil {
 		t.Fatalf("set commands: %v", err)
@@ -362,5 +383,46 @@ func TestSetMyCommandsIncludesBalance(t *testing.T) {
 
 	if !strings.Contains(buffer.String(), `"command":"balance"`) {
 		t.Fatalf("expected balance command in payload, got %s", buffer.String())
+	}
+}
+
+func TestHandleMessageRejectsUnauthorizedUser(t *testing.T) {
+	bot, accessService, chatService, _, _, buffer := newTestBot(t)
+	accessService.decision = accessapp.Decision{Allowed: false, Reason: accessapp.ReasonUserNotFound}
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 13,
+		From:      &User{ID: 2},
+		Chat:      Chat{ID: 100},
+		Text:      "hello",
+	})
+
+	if len(chatService.commands) != 0 {
+		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
+	}
+	if !strings.Contains(buffer.String(), `无权限`) {
+		t.Fatalf("expected unauthorized message, got %s", buffer.String())
+	}
+}
+
+func TestHandleCallbackQueryRejectsUnauthorizedUser(t *testing.T) {
+	bot, accessService, _, _, _, buffer := newTestBot(t)
+	accessService.decision = accessapp.Decision{Allowed: false, Reason: accessapp.ReasonUserBanned}
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-no-access",
+		From: User{ID: 2},
+		Message: &Message{
+			MessageID: 21,
+			Chat:      Chat{ID: 100},
+		},
+		Data: cbShapePortrait,
+	})
+
+	if !strings.Contains(buffer.String(), "answerCallbackQuery") {
+		t.Fatalf("expected callback answer request, got %s", buffer.String())
+	}
+	if !strings.Contains(buffer.String(), `"text":"无权限"`) {
+		t.Fatalf("expected unauthorized callback text, got %s", buffer.String())
 	}
 }

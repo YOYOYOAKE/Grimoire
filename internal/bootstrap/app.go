@@ -15,6 +15,7 @@ import (
 	runtimerepo "grimoire/internal/adapters/repository/runtime"
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	"grimoire/internal/adapters/telegram"
+	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	conversationapp "grimoire/internal/app/conversation"
 	drawapp "grimoire/internal/app/draw"
@@ -74,7 +75,8 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	}
 
 	telegramBot := telegram.NewBot(cfg, logger)
-	preferenceService := preferencesapp.NewService(preferenceRepo, adminTelegramID)
+	accessService := accessapp.NewService(preferenceRepo)
+	preferenceService := preferencesapp.NewService(preferenceRepo)
 	systemClock := platformclock.NewSystemClock()
 	idGenerator := platformid.NewUUIDGenerator()
 	primaryLLM := cfg.LLMs[0]
@@ -140,6 +142,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	runnerScheduler := memoryqueue.NewScheduler(runnerWorker)
 	recoveryService := recoveryapp.NewService(sqliteTaskRepo, runnerScheduler)
 
+	telegramBot.SetAccessService(accessService)
 	telegramBot.SetChatService(chatService)
 	telegramBot.SetPreferenceService(preferenceService)
 	telegramBot.SetBalanceService(imageGenerator)

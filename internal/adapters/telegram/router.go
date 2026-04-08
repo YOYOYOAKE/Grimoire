@@ -7,7 +7,9 @@ import (
 	"strings"
 	"time"
 
+	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
+	preferencesapp "grimoire/internal/app/preferences"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
 
@@ -25,8 +27,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	if message.From == nil {
 		return
 	}
-	if !b.isAdmin(message.From.ID) {
-		b.sendSimpleMessage(ctx, message.Chat.ID, "无权限")
+	if !b.authorizeMessage(ctx, message.Chat.ID, message.From.ID) {
 		return
 	}
 
@@ -38,7 +39,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 		return
 	case "/img":
 		b.clearPendingArtists()
-		b.sendImageMenu(ctx, message.Chat.ID, 0, "")
+		b.sendImageMenu(ctx, telegramUserID(message.From.ID), message.Chat.ID, 0, "")
 		return
 	case "/balance":
 		b.clearPendingArtists()
@@ -52,12 +53,15 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 			return
 		}
 		b.clearPendingArtists()
-		if _, err := b.preferenceService.UpdateArtists(ctx, text); err != nil {
+		if _, err := b.preferenceService.UpdateArtists(ctx, preferencesapp.UpdateArtistsCommand{
+			UserID:  telegramUserID(message.From.ID),
+			Artists: text,
+		}); err != nil {
 			b.logWarn("update artists failed", "chat_id", message.Chat.ID, "error", err)
 			b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("设置画师串失败: %v", err))
 			return
 		}
-		b.sendImageMenu(ctx, message.Chat.ID, 0, "全局画师串已更新。")
+		b.sendImageMenu(ctx, telegramUserID(message.From.ID), message.Chat.ID, 0, "全局画师串已更新。")
 		return
 	}
 
@@ -86,8 +90,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 }
 
 func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
-	if !b.isAdmin(query.From.ID) {
-		_ = b.answerCallbackQuery(ctx, query.ID, "无权限", true)
+	if !b.authorizeCallback(ctx, query) {
 		return
 	}
 	if query.Message == nil {
@@ -108,14 +111,19 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 
 	switch action.Kind {
 	case callbackActionUpdateShape:
-		pref, err = b.preferenceService.UpdateShape(ctx, action.Shape)
+		pref, err = b.preferenceService.UpdateShape(ctx, preferencesapp.UpdateShapeCommand{
+			UserID: telegramUserID(query.From.ID),
+			Shape:  action.Shape,
+		})
 	case callbackActionSetArtists:
 		b.setPendingArtists()
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "请发送新的画师串", false)
 		b.sendSimpleMessage(ctx, query.Message.Chat.ID, buildArtistsPromptText())
 		return
 	case callbackActionClearArtists:
-		pref, err = b.preferenceService.ClearArtists(ctx)
+		pref, err = b.preferenceService.ClearArtists(ctx, preferencesapp.ClearArtistsCommand{
+			UserID: telegramUserID(query.From.ID),
+		})
 	default:
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 		return
@@ -130,8 +138,8 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildImageMenuText("", pref), imageMenuMarkup())
 }
 
-func (b *Bot) sendImageMenu(ctx context.Context, chatID int64, messageID int64, notice string) {
-	pref, err := b.preferenceService.Get(ctx)
+func (b *Bot) sendImageMenu(ctx context.Context, userID string, chatID int64, messageID int64, notice string) {
+	pref, err := b.preferenceService.Get(ctx, preferencesapp.GetCommand{UserID: userID})
 	if err != nil {
 		b.logWarn("load image preference failed", "chat_id", chatID, "error", err)
 		b.sendSimpleMessage(ctx, chatID, fmt.Sprintf("加载偏好失败: %v", err))
@@ -176,8 +184,41 @@ func (b *Bot) answerCallbackQueryBestEffort(ctx context.Context, callbackID stri
 	}
 }
 
-func (b *Bot) isAdmin(userID int64) bool {
-	return b.cfg.Telegram.AdminUserID == userID
+func (b *Bot) authorizeMessage(ctx context.Context, chatID int64, userID int64) bool {
+	decision, err := b.checkAccess(ctx, userID)
+	if err != nil {
+		b.logWarn("check telegram access failed", "chat_id", chatID, "user_id", userID, "error", err)
+		b.sendSimpleMessage(ctx, chatID, "访问校验失败")
+		return false
+	}
+	if decision.Allowed {
+		return true
+	}
+	b.sendSimpleMessage(ctx, chatID, "无权限")
+	return false
+}
+
+func (b *Bot) authorizeCallback(ctx context.Context, query CallbackQuery) bool {
+	decision, err := b.checkAccess(ctx, query.From.ID)
+	if err != nil {
+		b.logWarn("check telegram callback access failed", "callback_id", query.ID, "user_id", query.From.ID, "error", err)
+		_ = b.answerCallbackQuery(ctx, query.ID, "访问校验失败", true)
+		return false
+	}
+	if decision.Allowed {
+		return true
+	}
+	_ = b.answerCallbackQuery(ctx, query.ID, "无权限", true)
+	return false
+}
+
+func (b *Bot) checkAccess(ctx context.Context, userID int64) (accessapp.Decision, error) {
+	if b.accessService == nil {
+		return accessapp.Decision{}, fmt.Errorf("access service is not initialized")
+	}
+	return b.accessService.Check(ctx, accessapp.CheckCommand{
+		TelegramID: strconv.FormatInt(userID, 10),
+	})
 }
 
 func (b *Bot) setPendingArtists() {
@@ -208,4 +249,8 @@ func firstWord(text string) string {
 		return ""
 	}
 	return parts[0]
+}
+
+func telegramUserID(userID int64) string {
+	return strconv.FormatInt(userID, 10)
 }

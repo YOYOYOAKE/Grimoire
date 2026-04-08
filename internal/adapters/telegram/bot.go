@@ -7,10 +7,11 @@ import (
 	"sync"
 	"time"
 
+	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
+	preferencesapp "grimoire/internal/app/preferences"
 	"grimoire/internal/config"
 	domainnai "grimoire/internal/domain/nai"
-	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	"grimoire/internal/platform/httpclient"
 )
@@ -21,11 +22,15 @@ type ChatService interface {
 	HandleText(ctx context.Context, command chatapp.HandleTextCommand) (chatapp.HandleTextResult, error)
 }
 
+type AccessService interface {
+	Check(ctx context.Context, command accessapp.CheckCommand) (accessapp.Decision, error)
+}
+
 type PreferenceService interface {
-	Get(ctx context.Context) (domainpreferences.Preference, error)
-	UpdateShape(ctx context.Context, shape domaindraw.Shape) (domainpreferences.Preference, error)
-	UpdateArtists(ctx context.Context, artists string) (domainpreferences.Preference, error)
-	ClearArtists(ctx context.Context) (domainpreferences.Preference, error)
+	Get(ctx context.Context, command preferencesapp.GetCommand) (domainpreferences.Preference, error)
+	UpdateShape(ctx context.Context, command preferencesapp.UpdateShapeCommand) (domainpreferences.Preference, error)
+	UpdateArtists(ctx context.Context, command preferencesapp.UpdateArtistsCommand) (domainpreferences.Preference, error)
+	ClearArtists(ctx context.Context, command preferencesapp.ClearArtistsCommand) (domainpreferences.Preference, error)
 }
 
 type BalanceService interface {
@@ -37,6 +42,7 @@ type Bot struct {
 	logger            *slog.Logger
 	httpClient        *http.Client
 	updateOffset      int64
+	accessService     AccessService
 	chatService       ChatService
 	preferenceService PreferenceService
 	balanceService    BalanceService
@@ -56,6 +62,10 @@ func NewBot(cfg config.Config, logger *slog.Logger) *Bot {
 
 func (b *Bot) SetChatService(service ChatService) {
 	b.chatService = service
+}
+
+func (b *Bot) SetAccessService(service AccessService) {
+	b.accessService = service
 }
 
 func (b *Bot) SetPreferenceService(service PreferenceService) {
