@@ -20,6 +20,22 @@ func TestBuildImageMenuTextIncludesNoticeAndFallbackArtist(t *testing.T) {
 	}
 }
 
+func TestImageMenuMarkupUsesRequestCallbackProtocol(t *testing.T) {
+	markup := imageMenuMarkup()
+	if markup == nil || len(markup.InlineKeyboard) != 4 {
+		t.Fatalf("unexpected image menu markup: %#v", markup)
+	}
+	if markup.InlineKeyboard[0][0].CallbackData != "request:shape:small-portrait" {
+		t.Fatalf("unexpected small portrait callback: %#v", markup.InlineKeyboard[0][0])
+	}
+	if markup.InlineKeyboard[3][0].CallbackData != requestArtistsSet {
+		t.Fatalf("unexpected set artists callback: %#v", markup.InlineKeyboard[3][0])
+	}
+	if markup.InlineKeyboard[3][1].CallbackData != requestArtistsClear {
+		t.Fatalf("unexpected clear artists callback: %#v", markup.InlineKeyboard[3][1])
+	}
+}
+
 func TestBuildBalanceText(t *testing.T) {
 	text := buildBalanceText(domainnai.AccountBalance{
 		PurchasedTrainingSteps: 321,

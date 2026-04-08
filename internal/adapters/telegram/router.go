@@ -116,7 +116,7 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		return
 	}
 
-	action, ok := parseCallbackAction(query.Data)
+	action, ok := parseRequestAction(query.Data)
 	if !ok {
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 		return
@@ -128,17 +128,17 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	)
 
 	switch action.Kind {
-	case callbackActionUpdateShape:
+	case requestActionUpdateShape:
 		pref, err = b.preferenceService.UpdateShape(ctx, preferencesapp.UpdateShapeCommand{
 			UserID: telegramUserID(query.From.ID),
 			Shape:  action.Shape,
 		})
-	case callbackActionSetArtists:
+	case requestActionSetArtists:
 		b.setPendingArtists()
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "请发送新的画师串", false)
 		b.sendSimpleMessage(ctx, query.Message.Chat.ID, buildArtistsPromptText())
 		return
-	case callbackActionClearArtists:
+	case requestActionClearArtists:
 		pref, err = b.preferenceService.ClearArtists(ctx, preferencesapp.ClearArtistsCommand{
 			UserID: telegramUserID(query.From.ID),
 		})

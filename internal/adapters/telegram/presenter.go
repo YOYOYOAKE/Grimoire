@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	requestapp "grimoire/internal/app/request"
+	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -25,23 +26,23 @@ func imageMenuMarkup() *InlineKeyboardMarkup {
 	return &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{
 			{
-				{Text: "Small Portrait", CallbackData: cbShapeSmallPortrait},
-				{Text: "Small Landscape", CallbackData: cbShapeSmallLandscape},
-				{Text: "Small Square", CallbackData: cbShapeSmallSquare},
+				{Text: "Small Portrait", CallbackData: requestShapeCallback(domaindraw.ShapeSmallPortrait)},
+				{Text: "Small Landscape", CallbackData: requestShapeCallback(domaindraw.ShapeSmallLandscape)},
+				{Text: "Small Square", CallbackData: requestShapeCallback(domaindraw.ShapeSmallSquare)},
 			},
 			{
-				{Text: "Normal Portrait", CallbackData: cbShapePortrait},
-				{Text: "Normal Landscape", CallbackData: cbShapeLandscape},
-				{Text: "Normal Square", CallbackData: cbShapeSquare},
+				{Text: "Normal Portrait", CallbackData: requestShapeCallback(domaindraw.ShapePortrait)},
+				{Text: "Normal Landscape", CallbackData: requestShapeCallback(domaindraw.ShapeLandscape)},
+				{Text: "Normal Square", CallbackData: requestShapeCallback(domaindraw.ShapeSquare)},
 			},
 			{
-				{Text: "Large Portrait", CallbackData: cbShapeLargePortrait},
-				{Text: "Large Landscape", CallbackData: cbShapeLargeLandscape},
-				{Text: "Large Square", CallbackData: cbShapeLargeSquare},
+				{Text: "Large Portrait", CallbackData: requestShapeCallback(domaindraw.ShapeLargePortrait)},
+				{Text: "Large Landscape", CallbackData: requestShapeCallback(domaindraw.ShapeLargeLandscape)},
+				{Text: "Large Square", CallbackData: requestShapeCallback(domaindraw.ShapeLargeSquare)},
 			},
 			{
-				{Text: "设置画师串", CallbackData: cbSetArtists},
-				{Text: "清空画师串", CallbackData: cbClearArtists},
+				{Text: "设置画师串", CallbackData: requestArtistsSet},
+				{Text: "清空画师串", CallbackData: requestArtistsClear},
 			},
 		},
 	}

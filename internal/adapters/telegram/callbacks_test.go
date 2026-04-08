@@ -6,42 +6,54 @@ import (
 	domaindraw "grimoire/internal/domain/draw"
 )
 
-func TestParseCallbackAction(t *testing.T) {
+func TestParseRequestAction(t *testing.T) {
 	tests := []struct {
 		name   string
 		input  string
-		want   callbackAction
+		want   requestAction
 		wantOK bool
 	}{
 		{
 			name:   "shape callback",
-			input:  cbShapeLargeLandscape,
-			want:   callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeLargeLandscape},
+			input:  requestShapeCallback(domaindraw.ShapeLargeLandscape),
+			want:   requestAction{Kind: requestActionUpdateShape, Shape: domaindraw.ShapeLargeLandscape},
 			wantOK: true,
 		},
 		{
 			name:   "set artists callback",
-			input:  cbSetArtists,
-			want:   callbackAction{Kind: callbackActionSetArtists},
+			input:  requestArtistsSet,
+			want:   requestAction{Kind: requestActionSetArtists},
 			wantOK: true,
 		},
 		{
 			name:   "clear artists callback",
-			input:  cbClearArtists,
-			want:   callbackAction{Kind: callbackActionClearArtists},
+			input:  requestArtistsClear,
+			want:   requestAction{Kind: requestActionClearArtists},
 			wantOK: true,
 		},
 		{
-			name:   "invalid callback",
+			name:   "invalid shape callback",
+			input:  "request:shape:unknown-shape",
+			want:   requestAction{},
+			wantOK: false,
+		},
+		{
+			name:   "request decision should not parse here",
+			input:  "request:confirm:session-1",
+			want:   requestAction{},
+			wantOK: false,
+		},
+		{
+			name:   "task action should not parse here",
 			input:  "task:stop:1",
-			want:   callbackAction{},
+			want:   requestAction{},
 			wantOK: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := parseCallbackAction(tt.input)
+			got, ok := parseRequestAction(tt.input)
 			if ok != tt.wantOK {
 				t.Fatalf("unexpected ok=%v", ok)
 			}

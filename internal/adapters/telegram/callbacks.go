@@ -7,17 +7,9 @@ import (
 )
 
 const (
-	cbShapeSmallPortrait  = "img:shape:small-portrait"
-	cbShapeSmallLandscape = "img:shape:small-landscape"
-	cbShapeSmallSquare    = "img:shape:small-square"
-	cbShapePortrait       = "img:shape:portrait"
-	cbShapeLandscape      = "img:shape:landscape"
-	cbShapeSquare         = "img:shape:square"
-	cbShapeLargePortrait  = "img:shape:large-portrait"
-	cbShapeLargeLandscape = "img:shape:large-landscape"
-	cbShapeLargeSquare    = "img:shape:large-square"
-	cbSetArtists          = "img:artists:set"
-	cbClearArtists        = "img:artists:clear"
+	requestShapePrefix  = "request:shape:"
+	requestArtistsSet   = "request:artists:set"
+	requestArtistsClear = "request:artists:clear"
 )
 
 const (
@@ -27,16 +19,16 @@ const (
 	taskRetryDrawPrefix      = "task:retry:draw:"
 )
 
-type callbackActionKind string
+type requestActionKind string
 
 const (
-	callbackActionUpdateShape  callbackActionKind = "update_shape"
-	callbackActionSetArtists   callbackActionKind = "set_artists"
-	callbackActionClearArtists callbackActionKind = "clear_artists"
+	requestActionUpdateShape  requestActionKind = "update_shape"
+	requestActionSetArtists   requestActionKind = "set_artists"
+	requestActionClearArtists requestActionKind = "clear_artists"
 )
 
-type callbackAction struct {
-	Kind  callbackActionKind
+type requestAction struct {
+	Kind  requestActionKind
 	Shape domaindraw.Shape
 }
 
@@ -54,33 +46,26 @@ type taskAction struct {
 	TaskID string
 }
 
-func parseCallbackAction(data string) (callbackAction, bool) {
-	switch strings.TrimSpace(data) {
-	case cbShapeSmallPortrait:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeSmallPortrait}, true
-	case cbShapeSmallLandscape:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeSmallLandscape}, true
-	case cbShapeSmallSquare:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeSmallSquare}, true
-	case cbShapePortrait:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapePortrait}, true
-	case cbShapeLandscape:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeLandscape}, true
-	case cbShapeSquare:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeSquare}, true
-	case cbShapeLargePortrait:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeLargePortrait}, true
-	case cbShapeLargeLandscape:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeLargeLandscape}, true
-	case cbShapeLargeSquare:
-		return callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeLargeSquare}, true
-	case cbSetArtists:
-		return callbackAction{Kind: callbackActionSetArtists}, true
-	case cbClearArtists:
-		return callbackAction{Kind: callbackActionClearArtists}, true
+func parseRequestAction(data string) (requestAction, bool) {
+	data = strings.TrimSpace(data)
+	switch {
+	case data == requestArtistsSet:
+		return requestAction{Kind: requestActionSetArtists}, true
+	case data == requestArtistsClear:
+		return requestAction{Kind: requestActionClearArtists}, true
+	case strings.HasPrefix(data, requestShapePrefix):
+		shape := domaindraw.Shape(strings.TrimSpace(strings.TrimPrefix(data, requestShapePrefix)))
+		if !shape.Valid() {
+			return requestAction{}, false
+		}
+		return requestAction{Kind: requestActionUpdateShape, Shape: shape}, true
 	default:
-		return callbackAction{}, false
+		return requestAction{}, false
 	}
+}
+
+func requestShapeCallback(shape domaindraw.Shape) string {
+	return requestShapePrefix + string(shape)
 }
 
 func parseTaskAction(data string) (taskAction, bool) {

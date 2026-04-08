@@ -361,7 +361,7 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 			MessageID: 20,
 			Chat:      Chat{ID: 100},
 		},
-		Data: cbShapePortrait,
+		Data: requestShapeCallback(domaindraw.ShapePortrait),
 	})
 
 	if prefService.pref.Shape != domaindraw.ShapePortrait {
@@ -423,6 +423,9 @@ func TestResultMessageHasNoRetryButtons(t *testing.T) {
 	}
 	if strings.Contains(string(markup), "retry") {
 		t.Fatalf("unexpected retry callback: %s", string(markup))
+	}
+	if strings.Contains(string(markup), "\"img:") {
+		t.Fatalf("unexpected legacy callback protocol: %s", string(markup))
 	}
 }
 
@@ -588,7 +591,7 @@ func TestHandleCallbackQueryRejectsUnauthorizedUser(t *testing.T) {
 			MessageID: 21,
 			Chat:      Chat{ID: 100},
 		},
-		Data: cbShapePortrait,
+		Data: requestShapeCallback(domaindraw.ShapePortrait),
 	})
 
 	if !strings.Contains(buffer.String(), "answerCallbackQuery") {
