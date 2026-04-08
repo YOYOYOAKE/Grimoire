@@ -10,7 +10,7 @@ func TestKnownShapesRemainValidAndKeepLabels(t *testing.T) {
 		ShapePortrait:       "Normal Portrait (832x1216)",
 		ShapeLandscape:      "Normal Landscape (1216x832)",
 		ShapeSquare:         "Normal Square (1024x1024)",
-		ShapeLargePortrait:  "Large Portrait (1014x1536)",
+		ShapeLargePortrait:  "Large Portrait (1024x1536)",
 		ShapeLargeLandscape: "Large Landscape (1536x1024)",
 		ShapeLargeSquare:    "Large Square (1472x1472)",
 	}

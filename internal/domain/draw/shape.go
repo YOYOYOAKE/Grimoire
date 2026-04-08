@@ -40,7 +40,7 @@ func (s Shape) Label() string {
 	case ShapeSquare:
 		return "Normal Square (1024x1024)"
 	case ShapeLargePortrait:
-		return "Large Portrait (1014x1536)"
+		return "Large Portrait (1024x1536)"
 	case ShapeLargeLandscape:
 		return "Large Landscape (1536x1024)"
 	case ShapeLargeSquare:

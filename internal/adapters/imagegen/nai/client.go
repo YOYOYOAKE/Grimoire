@@ -296,7 +296,7 @@ func resolveDimensions(shape domaindraw.Shape) (int, int, error) {
 	case domaindraw.ShapeLargeLandscape:
 		return 1536, 1024, nil
 	case domaindraw.ShapeLargePortrait:
-		return 1014, 1536, nil
+		return 1024, 1536, nil
 	default:
 		return 0, 0, fmt.Errorf("unsupported shape %q", shape)
 	}

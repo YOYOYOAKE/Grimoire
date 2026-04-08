@@ -36,7 +36,7 @@ func TestResolveDimensions(t *testing.T) {
 		{shape: domaindraw.ShapePortrait, width: 832, height: 1216},
 		{shape: domaindraw.ShapeLargeSquare, width: 1472, height: 1472},
 		{shape: domaindraw.ShapeLargeLandscape, width: 1536, height: 1024},
-		{shape: domaindraw.ShapeLargePortrait, width: 1014, height: 1536},
+		{shape: domaindraw.ShapeLargePortrait, width: 1024, height: 1536},
 	}
 
 	for _, tc := range testCases {
