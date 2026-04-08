@@ -34,6 +34,19 @@ func TestParseTranslation(t *testing.T) {
 	}
 }
 
+func TestTranslateSystemPromptRequiresExplicitCharacterCount(t *testing.T) {
+	for _, expected := range []string{
+		"Always infer the subject count from the request and express it explicitly in the global `prompt`",
+		"Even for a single clearly identified subject, you must still include an explicit count tag",
+		"The `characters` array length must match the actual number of distinct characters you inferred from the request.",
+		"Ensure the `characters` array length matches the inferred character count.",
+	} {
+		if !strings.Contains(translateSystemPrompt, expected) {
+			t.Fatalf("expected system prompt to contain %q", expected)
+		}
+	}
+}
+
 func TestParseTranslationRequiresCharacters(t *testing.T) {
 	_, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"blurry"}`)
 	if err == nil {
@@ -175,6 +188,20 @@ func TestTranslateSendsToolChoiceRequest(t *testing.T) {
 		if _, ok := properties[field]; !ok {
 			t.Fatalf("expected %q in tool schema, got %#v", field, properties)
 		}
+	}
+	promptField, ok := properties["prompt"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected prompt field schema: %#v", properties["prompt"])
+	}
+	if !strings.Contains(promptField["description"].(string), "1girl") {
+		t.Fatalf("expected count-tag guidance in prompt schema, got %#v", promptField["description"])
+	}
+	charactersField, ok := properties["characters"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected characters field schema: %#v", properties["characters"])
+	}
+	if !strings.Contains(charactersField["description"].(string), "array length must match") {
+		t.Fatalf("expected character-count guidance in characters schema, got %#v", charactersField["description"])
 	}
 }
 

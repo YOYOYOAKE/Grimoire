@@ -211,7 +211,7 @@ func translatePromptTool() map[string]any {
 				"properties": map[string]any{
 					"prompt": map[string]string{
 						"type":        "string",
-						"description": "Shared scene-level English prompt tags only. Use underscore-separated tags, do not include character-specific tags here, and allow weighted tags in the n::tag:: format for emphasized scene-level details.",
+						"description": "Shared scene-level English prompt tags only. It must explicitly include inferred subject count tags such as 1girl, 1boy, 2girls, or 1boy,1girl. Use underscore-separated tags, do not include character-specific tags here, and allow weighted tags in the n::tag:: format for emphasized scene-level details.",
 					},
 					"negative_prompt": map[string]any{
 						"type":        "string",
@@ -219,7 +219,8 @@ func translatePromptTool() map[string]any {
 						"description": "Shared scene-level English negative prompt tags. It must be non-empty.",
 					},
 					"characters": map[string]any{
-						"type": "array",
+						"type":        "array",
+						"description": "Character-specific prompt entries. The array length must match the number of distinct characters inferred from the request, and may be empty only when there is no character subject.",
 						"items": map[string]any{
 							"type": "object",
 							"properties": map[string]any{
