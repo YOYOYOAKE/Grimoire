@@ -1,10 +1,15 @@
 package chat
 
+import "time"
+
 type HandleTextCommand struct {
-	UserID string
-	Text   string
+	UserID    string
+	MessageID string
+	Text      string
+	CreatedAt time.Time
 }
 
 type HandleTextResult struct {
-	Reply string
+	SessionID string
+	Reply     string
 }

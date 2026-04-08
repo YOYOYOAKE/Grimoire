@@ -7,18 +7,18 @@ import (
 	"sync"
 	"time"
 
-	drawapp "grimoire/internal/app/draw"
+	chatapp "grimoire/internal/app/chat"
 	"grimoire/internal/config"
-	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
+	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	"grimoire/internal/platform/httpclient"
 )
 
 const apiBase = "https://api.telegram.org"
 
-type DrawService interface {
-	Submit(ctx context.Context, command drawapp.SubmitCommand) (domaindraw.Task, error)
+type ChatService interface {
+	HandleText(ctx context.Context, command chatapp.HandleTextCommand) (chatapp.HandleTextResult, error)
 }
 
 type PreferenceService interface {
@@ -37,7 +37,7 @@ type Bot struct {
 	logger            *slog.Logger
 	httpClient        *http.Client
 	updateOffset      int64
-	drawService       DrawService
+	chatService       ChatService
 	preferenceService PreferenceService
 	balanceService    BalanceService
 
@@ -51,12 +51,11 @@ func NewBot(cfg config.Config, logger *slog.Logger) *Bot {
 		logger:       logger,
 		httpClient:   httpclient.New(cfg.Telegram.TimeoutSec, cfg.Telegram.Proxy, logger, "telegram"),
 		updateOffset: 0,
-		drawService:  nil,
 	}
 }
 
-func (b *Bot) SetDrawService(service DrawService) {
-	b.drawService = service
+func (b *Bot) SetChatService(service ChatService) {
+	b.chatService = service
 }
 
 func (b *Bot) SetPreferenceService(service PreferenceService) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	drawapp "grimoire/internal/app/draw"
+	chatapp "grimoire/internal/app/chat"
 	"grimoire/internal/config"
 	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
@@ -21,13 +21,21 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
-type drawServiceMock struct {
-	commands []drawapp.SubmitCommand
+type chatServiceMock struct {
+	commands []chatapp.HandleTextCommand
+	result   chatapp.HandleTextResult
+	err      error
 }
 
-func (m *drawServiceMock) Submit(_ context.Context, command drawapp.SubmitCommand) (domaindraw.Task, error) {
+func (m *chatServiceMock) HandleText(_ context.Context, command chatapp.HandleTextCommand) (chatapp.HandleTextResult, error) {
 	m.commands = append(m.commands, command)
-	return domaindraw.Task{ID: "task-1"}, nil
+	if m.err != nil {
+		return chatapp.HandleTextResult{}, m.err
+	}
+	if strings.TrimSpace(m.result.Reply) == "" {
+		m.result = chatapp.HandleTextResult{Reply: "请再补充一点构图方向。"}
+	}
+	return m.result, nil
 }
 
 type preferenceServiceMock struct {
@@ -70,7 +78,7 @@ func (m *balanceServiceMock) GetBalance(_ context.Context) (domainnai.AccountBal
 	return m.balance, nil
 }
 
-func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
+func newTestBot(t *testing.T) (*Bot, *chatServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
 	t.Helper()
 	buffer := &bytes.Buffer{}
 	bot := NewBot(config.Config{
@@ -101,7 +109,7 @@ func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *
 		}),
 	}
 
-	drawService := &drawServiceMock{}
+	chatService := &chatServiceMock{}
 	prefService := &preferenceServiceMock{}
 	balanceService := &balanceServiceMock{
 		balance: domainnai.AccountBalance{
@@ -112,14 +120,14 @@ func newTestBot(t *testing.T) (*Bot, *drawServiceMock, *preferenceServiceMock, *
 			SubscriptionActive:     true,
 		},
 	}
-	bot.SetDrawService(drawService)
+	bot.SetChatService(chatService)
 	bot.SetPreferenceService(prefService)
 	bot.SetBalanceService(balanceService)
-	return bot, drawService, prefService, balanceService, buffer
+	return bot, chatService, prefService, balanceService, buffer
 }
 
-func TestHandleMessageSubmitsDrawTask(t *testing.T) {
-	bot, drawService, _, _, _ := newTestBot(t)
+func TestHandleMessageUsesChatService(t *testing.T) {
+	bot, chatService, _, _, buffer := newTestBot(t)
 	bot.handleMessage(context.Background(), Message{
 		MessageID: 10,
 		From:      &User{ID: 1},
@@ -127,16 +135,28 @@ func TestHandleMessageSubmitsDrawTask(t *testing.T) {
 		Text:      "画一个月下的少女",
 	})
 
-	if len(drawService.commands) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(drawService.commands))
+	if len(chatService.commands) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(chatService.commands))
 	}
-	if drawService.commands[0].Prompt != "画一个月下的少女" {
-		t.Fatalf("unexpected prompt: %q", drawService.commands[0].Prompt)
+	if chatService.commands[0].UserID != "1" {
+		t.Fatalf("unexpected user id: %q", chatService.commands[0].UserID)
+	}
+	if chatService.commands[0].MessageID != "10" {
+		t.Fatalf("unexpected message id: %q", chatService.commands[0].MessageID)
+	}
+	if chatService.commands[0].Text != "画一个月下的少女" {
+		t.Fatalf("unexpected text: %q", chatService.commands[0].Text)
+	}
+	if !strings.Contains(buffer.String(), `请再补充一点构图方向。`) {
+		t.Fatalf("expected chat reply to be sent, got %s", buffer.String())
+	}
+	if !strings.Contains(buffer.String(), `"reply_to_message_id":10`) {
+		t.Fatalf("expected reply target in output, got %s", buffer.String())
 	}
 }
 
 func TestRouteUpdateDispatchesMessage(t *testing.T) {
-	bot, drawService, _, _, _ := newTestBot(t)
+	bot, chatService, _, _, _ := newTestBot(t)
 	bot.routeUpdate(context.Background(), Update{
 		Message: &Message{
 			MessageID: 10,
@@ -146,8 +166,41 @@ func TestRouteUpdateDispatchesMessage(t *testing.T) {
 		},
 	})
 
-	if len(drawService.commands) != 1 {
-		t.Fatalf("expected 1 command, got %d", len(drawService.commands))
+	if len(chatService.commands) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(chatService.commands))
+	}
+}
+
+func TestHandleMessageSendsErrorWhenChatServiceFails(t *testing.T) {
+	bot, chatService, _, _, buffer := newTestBot(t)
+	chatService.err = errors.New("boom")
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 10,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "画一个月下的少女",
+	})
+
+	if !strings.Contains(buffer.String(), "处理消息失败: boom") {
+		t.Fatalf("expected chat error message, got %s", buffer.String())
+	}
+}
+
+func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
+	bot, chatService, _, _, buffer := newTestBot(t)
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 10,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/start",
+	})
+
+	if len(chatService.commands) != 0 {
+		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
+	}
+	if !strings.Contains(buffer.String(), "发送文本即可进入需求对话，确认后再开始绘图。") {
+		t.Fatalf("expected updated start text, got %s", buffer.String())
 	}
 }
 

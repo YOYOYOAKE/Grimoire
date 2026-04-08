@@ -15,10 +15,13 @@ import (
 	runtimerepo "grimoire/internal/adapters/repository/runtime"
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	"grimoire/internal/adapters/telegram"
+	chatapp "grimoire/internal/app/chat"
+	conversationapp "grimoire/internal/app/conversation"
 	drawapp "grimoire/internal/app/draw"
 	preferencesapp "grimoire/internal/app/preferences"
 	recoveryapp "grimoire/internal/app/recovery"
 	runnerapp "grimoire/internal/app/runner"
+	sessionapp "grimoire/internal/app/session"
 	"grimoire/internal/config"
 	platformclock "grimoire/internal/platform/clock"
 	platformid "grimoire/internal/platform/id"
@@ -50,6 +53,9 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	if err != nil {
 		return nil, fmt.Errorf("resolve bootstrap wiring: %w", err)
 	}
+	if len(cfg.LLMs) == 0 {
+		return nil, fmt.Errorf("at least one llm is required")
+	}
 
 	taskRepo := memoryrepo.NewTaskRepository()
 	runtimePreferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
@@ -71,6 +77,8 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	preferenceService := preferencesapp.NewService(preferenceRepo, adminTelegramID)
 	systemClock := platformclock.NewSystemClock()
 	idGenerator := platformid.NewUUIDGenerator()
+	primaryLLM := cfg.LLMs[0]
+	conversationClient := openai.NewConversationClient(primaryLLM, logger)
 	translateClient := openai.NewTranslateFailoverClient(cfg.LLMs, logger)
 	imageGenerator, err := nai.NewClient(cfg, logger)
 	if err != nil {
@@ -95,8 +103,21 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 
 	drawService.SetScheduler(worker)
 
+	sqliteSessionRepo := sqliterepo.NewSessionRepository(db, idGenerator)
+	sqliteSessionMessageRepo := sqliterepo.NewSessionMessageRepository(db)
 	sqliteTaskRepo := sqliterepo.NewTaskRepository(db)
 	sqliteTxRunner := sqliterepo.NewTxRunner(db)
+	sessionService := sessionapp.NewService(sqliteSessionRepo, sqliteSessionMessageRepo, sqliteTxRunner)
+	conversationService := conversationapp.NewService(
+		conversationClient,
+		sqliteSessionRepo,
+		sqliteSessionMessageRepo,
+		sqliteTxRunner,
+		wiring.ConversationMessageLimit,
+		systemClock.Now,
+		idGenerator.NewString,
+	)
+	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService)
 	imageStore, err := localstore.NewImageStore(wiring.StorageLayout)
 	if err != nil {
 		return nil, fmt.Errorf("init local image store: %w", err)
@@ -119,7 +140,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	runnerScheduler := memoryqueue.NewScheduler(runnerWorker)
 	recoveryService := recoveryapp.NewService(sqliteTaskRepo, runnerScheduler)
 
-	telegramBot.SetDrawService(drawService)
+	telegramBot.SetChatService(chatService)
 	telegramBot.SetPreferenceService(preferenceService)
 	telegramBot.SetBalanceService(imageGenerator)
 

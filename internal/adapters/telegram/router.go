@@ -3,9 +3,11 @@ package telegram
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
-	drawapp "grimoire/internal/app/draw"
+	chatapp "grimoire/internal/app/chat"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
 
@@ -62,18 +64,24 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	if text == "" {
 		return
 	}
-	if b.drawService == nil {
-		b.logWarn("draw service is not initialized", "chat_id", message.Chat.ID)
-		b.sendSimpleMessage(ctx, message.Chat.ID, "绘图服务未初始化")
+	if b.chatService == nil {
+		b.logWarn("chat service is not initialized", "chat_id", message.Chat.ID)
+		b.sendSimpleMessage(ctx, message.Chat.ID, "聊天服务未初始化")
 		return
 	}
-	if _, err := b.drawService.Submit(ctx, drawapp.SubmitCommand{
-		ChatID:           message.Chat.ID,
-		Prompt:           text,
-		RequestMessageID: message.MessageID,
-	}); err != nil {
-		b.logWarn("submit draw task failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
-		b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("创建任务失败: %v", err))
+	result, err := b.chatService.HandleText(ctx, chatapp.HandleTextCommand{
+		UserID:    strconv.FormatInt(message.From.ID, 10),
+		MessageID: strconv.FormatInt(message.MessageID, 10),
+		Text:      text,
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		b.logWarn("handle chat message failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
+		b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("处理消息失败: %v", err))
+		return
+	}
+	if _, err := b.sendMessage(ctx, message.Chat.ID, result.Reply, nil, message.MessageID); err != nil {
+		b.logWarn("send chat reply failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
 	}
 }
 
