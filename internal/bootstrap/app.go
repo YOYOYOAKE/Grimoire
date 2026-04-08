@@ -11,7 +11,6 @@ import (
 	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
 	memoryqueue "grimoire/internal/adapters/queue/memory"
-	runtimerepo "grimoire/internal/adapters/repository/runtime"
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	"grimoire/internal/adapters/telegram"
 	accessapp "grimoire/internal/app/access"
@@ -57,15 +56,10 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		return nil, fmt.Errorf("at least one llm is required")
 	}
 
-	runtimePreferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
-	if err != nil {
-		return nil, fmt.Errorf("init runtime preference repository: %w", err)
-	}
 	adminTelegramID := strconv.FormatInt(cfg.Telegram.AdminUserID, 10)
 	preferenceRepo, db, err := preparePreferenceRepository(
 		context.Background(),
 		wiring.StorageLayout.DatabasePath,
-		runtimePreferenceRepo,
 		adminTelegramID,
 	)
 	if err != nil {

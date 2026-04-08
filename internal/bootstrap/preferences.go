@@ -7,50 +7,15 @@ import (
 	"fmt"
 	"strings"
 
-	runtimerepo "grimoire/internal/adapters/repository/runtime"
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	preferencesapp "grimoire/internal/app/preferences"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domainuser "grimoire/internal/domain/user"
 )
 
-type mirroredPreferenceRepository struct {
-	users  *sqliterepo.UserRepository
-	legacy *runtimerepo.PreferenceRepository
-}
-
-func newMirroredPreferenceRepository(
-	users *sqliterepo.UserRepository,
-	legacy *runtimerepo.PreferenceRepository,
-) preferencesapp.Repository {
-	return &mirroredPreferenceRepository{
-		users:  users,
-		legacy: legacy,
-	}
-}
-
-func (r *mirroredPreferenceRepository) GetByTelegramID(ctx context.Context, telegramID string) (domainuser.User, error) {
-	return r.users.GetByTelegramID(ctx, telegramID)
-}
-
-func (r *mirroredPreferenceRepository) UpdatePreference(
-	ctx context.Context,
-	telegramID string,
-	preference domainpreferences.Preference,
-) error {
-	if err := r.users.UpdatePreference(ctx, telegramID, preference); err != nil {
-		return err
-	}
-	if err := r.legacy.Save(preference); err != nil {
-		return err
-	}
-	return nil
-}
-
 func preparePreferenceRepository(
 	ctx context.Context,
 	databasePath string,
-	runtimeRepo *runtimerepo.PreferenceRepository,
 	adminTelegramID string,
 ) (preferencesapp.Repository, *sql.DB, error) {
 	db, err := sqliterepo.Open(ctx, databasePath)
@@ -64,18 +29,17 @@ func preparePreferenceRepository(
 	}
 
 	userRepo := sqliterepo.NewUserRepository(db)
-	if err := ensureAdminPreferenceMirror(ctx, userRepo, runtimeRepo, adminTelegramID); err != nil {
+	if err := ensureAdminPreferenceUser(ctx, userRepo, adminTelegramID); err != nil {
 		_ = db.Close()
 		return nil, nil, err
 	}
 
-	return newMirroredPreferenceRepository(userRepo, runtimeRepo), db, nil
+	return userRepo, db, nil
 }
 
-func ensureAdminPreferenceMirror(
+func ensureAdminPreferenceUser(
 	ctx context.Context,
 	userRepo *sqliterepo.UserRepository,
-	runtimeRepo *runtimerepo.PreferenceRepository,
 	adminTelegramID string,
 ) error {
 	adminTelegramID = strings.TrimSpace(adminTelegramID)
@@ -83,23 +47,15 @@ func ensureAdminPreferenceMirror(
 		return fmt.Errorf("admin telegram id is required")
 	}
 
-	runtimePreference, err := runtimeRepo.Get()
-	if err != nil {
-		return fmt.Errorf("load runtime preference: %w", err)
-	}
-
-	user, err := userRepo.GetByTelegramID(ctx, adminTelegramID)
+	_, err := userRepo.GetByTelegramID(ctx, adminTelegramID)
 	if err == nil {
-		if err := runtimeRepo.Save(user.Preference); err != nil {
-			return fmt.Errorf("sync runtime preference mirror: %w", err)
-		}
 		return nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("load preference user %s: %w", adminTelegramID, err)
 	}
 
-	seedUser, err := domainuser.New(adminTelegramID, domainuser.RoleNormal, runtimePreference)
+	seedUser, err := domainuser.New(adminTelegramID, domainuser.RoleNormal, domainpreferences.DefaultPreference())
 	if err != nil {
 		return fmt.Errorf("construct preference user %s: %w", adminTelegramID, err)
 	}
