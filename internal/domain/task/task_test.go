@@ -6,7 +6,7 @@ import (
 )
 
 func TestNewTaskStartsQueued(t *testing.T) {
-	context, err := NewContext(`{"version":1}`)
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -30,8 +30,8 @@ func TestTaskSuccessPath(t *testing.T) {
 	if err := task.MarkTranslating(time.Unix(2, 0)); err != nil {
 		t.Fatalf("mark translating: %v", err)
 	}
-	if err := task.SetPrompt("masterpiece, cat"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := task.SetPromptBundle(mustPromptBundle(t, "masterpiece, cat")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 	if err := task.MarkDrawing(time.Unix(3, 0)); err != nil {
 		t.Fatalf("mark drawing: %v", err)
@@ -94,7 +94,7 @@ func TestTaskStopPath(t *testing.T) {
 	}
 }
 
-func TestMarkDrawingRequiresPrompt(t *testing.T) {
+func TestMarkDrawingRequiresPromptBundle(t *testing.T) {
 	task := newTestTask(t)
 	if err := task.MarkTranslating(time.Unix(2, 0)); err != nil {
 		t.Fatalf("mark translating: %v", err)
@@ -131,7 +131,7 @@ func TestMarkFailedRejectsInvalidTaskError(t *testing.T) {
 }
 
 func TestRestoreCompletedTask(t *testing.T) {
-	context, err := NewContext(`{"version":1}`)
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -152,12 +152,11 @@ func TestRestoreCompletedTask(t *testing.T) {
 		"session-1",
 		"task-0",
 		"draw a cat",
-		"masterpiece, cat",
 		"data/images/user-1/task-1.jpg",
 		StatusCompleted,
 		nil,
 		timeline,
-		context,
+		mustContextWithPromptBundle(t, context, "masterpiece, cat"),
 		"100",
 		"200",
 	)
@@ -171,13 +170,20 @@ func TestRestoreCompletedTask(t *testing.T) {
 	if task.SourceTaskID != "task-0" {
 		t.Fatalf("unexpected source task: %s", task.SourceTaskID)
 	}
-	if task.Image == "" || task.Prompt == "" {
-		t.Fatal("expected restored prompt and image")
+	if task.Image == "" {
+		t.Fatal("expected restored image")
+	}
+	bundle, ok, err := task.PromptBundle()
+	if err != nil {
+		t.Fatalf("prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, cat" {
+		t.Fatalf("unexpected restored prompt bundle: %#v ok=%v", bundle, ok)
 	}
 }
 
 func TestRestoreFailedTaskRequiresError(t *testing.T) {
-	context, err := NewContext(`{"version":1}`)
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -193,7 +199,6 @@ func TestRestoreFailedTaskRequiresError(t *testing.T) {
 		"",
 		"draw a cat",
 		"",
-		"",
 		StatusFailed,
 		nil,
 		timeline,
@@ -206,7 +211,7 @@ func TestRestoreFailedTaskRequiresError(t *testing.T) {
 }
 
 func TestRestoreQueuedTaskRejectsTransitionTimeline(t *testing.T) {
-	context, err := NewContext(`{"version":1}`)
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -222,7 +227,6 @@ func TestRestoreQueuedTaskRejectsTransitionTimeline(t *testing.T) {
 		"",
 		"draw a cat",
 		"",
-		"",
 		StatusQueued,
 		nil,
 		timeline,
@@ -235,7 +239,7 @@ func TestRestoreQueuedTaskRejectsTransitionTimeline(t *testing.T) {
 }
 
 func TestRestoreFailedTaskRejectsDrawingWithoutTranslating(t *testing.T) {
-	context, err := NewContext(`{"version":1}`)
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -257,12 +261,11 @@ func TestRestoreFailedTaskRejectsDrawingWithoutTranslating(t *testing.T) {
 		"session-1",
 		"",
 		"draw a cat",
-		"masterpiece, cat",
 		"",
 		StatusFailed,
 		&taskError,
 		timeline,
-		context,
+		mustContextWithPromptBundle(t, context, "masterpiece, cat"),
 		"",
 		"",
 	); err == nil {
@@ -270,8 +273,8 @@ func TestRestoreFailedTaskRejectsDrawingWithoutTranslating(t *testing.T) {
 	}
 }
 
-func TestRestoreStoppedTaskRejectsMissingPromptAfterDrawing(t *testing.T) {
-	context, err := NewContext(`{"version":1}`)
+func TestRestoreStoppedTaskRejectsMissingPromptBundleAfterDrawing(t *testing.T) {
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -292,7 +295,6 @@ func TestRestoreStoppedTaskRejectsMissingPromptAfterDrawing(t *testing.T) {
 		"session-1",
 		"",
 		"draw a cat",
-		"",
 		"",
 		StatusStopped,
 		nil,
@@ -320,12 +322,12 @@ func TestSetMessageIDsTrimWhitespace(t *testing.T) {
 }
 
 func TestContextRawReturnsNormalizedJSON(t *testing.T) {
-	context, err := NewContext(` {"version":1} `)
+	context, err := NewContext(` {"version":2,"shape":"square"} `)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
 
-	if context.Raw() != `{"version":1}` {
+	if context.Raw() != `{"version":2,"shape":"square"}` {
 		t.Fatalf("unexpected raw context: %q", context.Raw())
 	}
 }
@@ -378,7 +380,7 @@ func TestValidateTimelineForStatusRejectsInvalidCombinations(t *testing.T) {
 func newTestTask(t *testing.T) Task {
 	t.Helper()
 
-	context, err := NewContext(`{"version":1}`)
+	context, err := NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -398,4 +400,22 @@ func mustNewTimeline(t *testing.T, createdAt time.Time) Timeline {
 		t.Fatalf("new timeline: %v", err)
 	}
 	return timeline
+}
+
+func mustPromptBundle(t *testing.T, prompt string) PromptBundle {
+	t.Helper()
+	bundle, err := NewPromptBundle(prompt, "", nil)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
+}
+
+func mustContextWithPromptBundle(t *testing.T, context Context, prompt string) Context {
+	t.Helper()
+	updated, err := context.WithPromptBundle(mustPromptBundle(t, prompt))
+	if err != nil {
+		t.Fatalf("context with prompt bundle: %v", err)
+	}
+	return updated
 }

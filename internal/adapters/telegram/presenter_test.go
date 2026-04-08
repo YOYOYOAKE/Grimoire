@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	taskapp "grimoire/internal/app/task"
+	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -120,8 +122,14 @@ func TestResultTaskMarkupAndPromptText(t *testing.T) {
 		t.Fatalf("unexpected retry draw callback: %#v", markup.InlineKeyboard[1][1])
 	}
 
-	text := buildPromptText(" masterpiece, moonlit_girl ")
-	if !strings.Contains(text, "Prompt") || !strings.Contains(text, "masterpiece, moonlit_girl") {
+	text := buildPromptText(taskapp.PromptDetails{
+		Prompt:         " masterpiece, moonlit_girl ",
+		NegativePrompt: " blurry ",
+		Characters: []domaindraw.CharacterPrompt{
+			{Prompt: "kinich_(genshin_impact)", NegativePrompt: "extra_arms", Position: "C3"},
+		},
+	})
+	if !strings.Contains(text, "Global Prompt") || !strings.Contains(text, "masterpiece, moonlit_girl") || !strings.Contains(text, "Negative Prompt") || !strings.Contains(text, "Character 1") {
 		t.Fatalf("unexpected prompt text: %s", text)
 	}
 }

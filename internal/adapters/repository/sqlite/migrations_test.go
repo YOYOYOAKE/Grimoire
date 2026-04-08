@@ -15,7 +15,7 @@ func TestMigrateAppliesFullEmbeddedSchemaOnlyOnce(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 
-	if got := countRows(t, db, "schema_migrations"); got != 2 {
+	if got := countRows(t, db, "schema_migrations"); got != 3 {
 		t.Fatalf("unexpected migration count: %d", got)
 	}
 
@@ -29,6 +29,9 @@ func TestMigrateAppliesFullEmbeddedSchemaOnlyOnce(t *testing.T) {
 	}
 	if !indexExists(t, db, "idx_sessions_user_id") {
 		t.Fatal("expected idx_sessions_user_id index to exist after migration")
+	}
+	if columnExists(t, db, "tasks", "prompt") {
+		t.Fatal("expected tasks.prompt column to be removed after migration")
 	}
 }
 
@@ -111,7 +114,7 @@ func TestMigrateUpgradesLegacySingleSessionSchema(t *testing.T) {
 		"session-1",
 		nil,
 		"draw moon",
-		nil,
+		"masterpiece, moon",
 		nil,
 		"queued",
 		nil,
@@ -127,7 +130,7 @@ func TestMigrateUpgradesLegacySingleSessionSchema(t *testing.T) {
 		t.Fatalf("upgrade migrate: %v", err)
 	}
 
-	if got := countRows(t, db, "schema_migrations"); got != 2 {
+	if got := countRows(t, db, "schema_migrations"); got != 3 {
 		t.Fatalf("unexpected migration count after upgrade: %d", got)
 	}
 	if !tableExists(t, db, "active_sessions") {
@@ -141,6 +144,18 @@ func TestMigrateUpgradesLegacySingleSessionSchema(t *testing.T) {
 	}
 	if got := countRows(t, db, "tasks"); got != 1 {
 		t.Fatalf("expected task to survive upgrade, got %d", got)
+	}
+	if got := queryString(t, db, `SELECT json_extract(context, '$.version') FROM tasks WHERE id = ?`, "task-1"); got != "2" {
+		t.Fatalf("unexpected task context version after upgrade: %q", got)
+	}
+	if got := queryString(t, db, `SELECT json_extract(context, '$.prompt_bundle.prompt') FROM tasks WHERE id = ?`, "task-1"); got != "masterpiece, moon" {
+		t.Fatalf("unexpected migrated prompt bundle prompt: %q", got)
+	}
+	if got := queryString(t, db, `SELECT json_extract(context, '$.prompt_bundle.negative_prompt') FROM tasks WHERE id = ?`, "task-1"); got != "" {
+		t.Fatalf("unexpected migrated negative prompt: %q", got)
+	}
+	if columnExists(t, db, "tasks", "prompt") {
+		t.Fatal("expected tasks.prompt column to be removed after upgrade")
 	}
 	if _, err := db.ExecContext(
 		context.Background(),

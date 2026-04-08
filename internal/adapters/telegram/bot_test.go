@@ -88,7 +88,7 @@ type taskServiceMock struct {
 	result                 domaintask.Task
 	err                    error
 	stopErr                error
-	prompt                 string
+	prompt                 taskapp.PromptDetails
 	promptSet              bool
 	promptErr              error
 	retryTranslateErr      error
@@ -117,13 +117,13 @@ func (m *taskServiceMock) Stop(_ context.Context, command taskapp.StopCommand) (
 	return m.result, nil
 }
 
-func (m *taskServiceMock) GetPrompt(_ context.Context, command taskapp.GetPromptCommand) (string, error) {
+func (m *taskServiceMock) GetPrompt(_ context.Context, command taskapp.GetPromptCommand) (taskapp.PromptDetails, error) {
 	m.prompts = append(m.prompts, command)
 	if m.promptErr != nil {
-		return "", m.promptErr
+		return taskapp.PromptDetails{}, m.promptErr
 	}
 	if !m.promptSet {
-		return "masterpiece, moonlit_girl", nil
+		return taskapp.PromptDetails{Prompt: "masterpiece, moonlit_girl"}, nil
 	}
 	return m.prompt, nil
 }
@@ -827,7 +827,13 @@ func TestHandleStopTaskCallbackReportsFailure(t *testing.T) {
 
 func TestHandleTaskPromptCallbackSendsPromptMessage(t *testing.T) {
 	bot, _, _, taskService, _, _, buffer := newTestBot(t)
-	taskService.prompt = "masterpiece, moonlit_girl"
+	taskService.prompt = taskapp.PromptDetails{
+		Prompt:         "masterpiece, moonlit_girl",
+		NegativePrompt: "blurry",
+		Characters: []domaindraw.CharacterPrompt{
+			{Prompt: "kinich_(genshin_impact)", NegativePrompt: "extra_arms", Position: "C3"},
+		},
+	}
 	taskService.promptSet = true
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
@@ -843,7 +849,7 @@ func TestHandleTaskPromptCallbackSendsPromptMessage(t *testing.T) {
 	if len(taskService.prompts) != 1 || taskService.prompts[0].TaskID != "task-1" || taskService.prompts[0].UserID != "1" {
 		t.Fatalf("unexpected prompt calls: %#v", taskService.prompts)
 	}
-	if !strings.Contains(buffer.String(), `Prompt`) || !strings.Contains(buffer.String(), `masterpiece, moonlit_girl`) {
+	if !strings.Contains(buffer.String(), `Global Prompt`) || !strings.Contains(buffer.String(), `masterpiece, moonlit_girl`) || !strings.Contains(buffer.String(), `Negative Prompt`) || !strings.Contains(buffer.String(), `Character 1`) {
 		t.Fatalf("expected prompt message in output, got %s", buffer.String())
 	}
 	if strings.Contains(buffer.String(), `"reply_to_message_id":34`) {
@@ -921,7 +927,7 @@ func TestHandleTaskPromptCallbackReportsFailure(t *testing.T) {
 func TestHandleTaskPromptCallbackReportsEmptyPrompt(t *testing.T) {
 	bot, _, _, taskService, _, _, buffer := newTestBot(t)
 	taskService.promptSet = true
-	taskService.prompt = "   "
+	taskService.prompt = taskapp.PromptDetails{Prompt: "   "}
 
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
 		ID:   "cb-prompt-empty",

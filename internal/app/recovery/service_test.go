@@ -132,8 +132,8 @@ func mustRecoveryTask(t *testing.T, id string, status domaintask.Status) domaint
 		if err := task.MarkTranslating(time.Unix(2, 0).UTC()); err != nil {
 			t.Fatalf("mark translating: %v", err)
 		}
-		if err := task.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-			t.Fatalf("set prompt: %v", err)
+		if err := task.SetPromptBundle(mustRecoveryPromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+			t.Fatalf("set prompt bundle: %v", err)
 		}
 		if err := task.MarkDrawing(time.Unix(3, 0).UTC()); err != nil {
 			t.Fatalf("mark drawing: %v", err)
@@ -143,4 +143,13 @@ func mustRecoveryTask(t *testing.T, id string, status domaintask.Status) domaint
 		t.Fatalf("unsupported status: %s", status)
 		return domaintask.Task{}
 	}
+}
+
+func mustRecoveryPromptBundle(t *testing.T, prompt string) domaintask.PromptBundle {
+	t.Helper()
+	bundle, err := domaintask.NewPromptBundle(prompt, "", nil)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
 }

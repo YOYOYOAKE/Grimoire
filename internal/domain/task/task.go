@@ -12,7 +12,6 @@ type Task struct {
 	SessionID         string
 	SourceTaskID      string
 	Request           string
-	Prompt            string
 	Image             string
 	Status            Status
 	Error             *TaskError
@@ -66,7 +65,6 @@ func Restore(
 	sessionID string,
 	sourceTaskID string,
 	request string,
-	prompt string,
 	image string,
 	status Status,
 	taskError *TaskError,
@@ -79,7 +77,6 @@ func Restore(
 	userID = strings.TrimSpace(userID)
 	sessionID = strings.TrimSpace(sessionID)
 	request = strings.TrimSpace(request)
-	prompt = strings.TrimSpace(prompt)
 	image = strings.TrimSpace(image)
 	progressMessageID = strings.TrimSpace(progressMessageID)
 	resultMessageID = strings.TrimSpace(resultMessageID)
@@ -120,7 +117,6 @@ func Restore(
 		UserID:            userID,
 		SessionID:         sessionID,
 		Request:           request,
-		Prompt:            prompt,
 		Image:             image,
 		Status:            status,
 		Error:             normalizedError,
@@ -151,13 +147,37 @@ func (t *Task) SetSourceTask(sourceTaskID string) error {
 	return nil
 }
 
-func (t *Task) SetPrompt(prompt string) error {
-	prompt = strings.TrimSpace(prompt)
-	if prompt == "" {
-		return fmt.Errorf("task prompt is required")
+func (t *Task) SetPromptBundle(bundle PromptBundle) error {
+	contextSnapshot, err := t.Context.WithPromptBundle(bundle)
+	if err != nil {
+		return err
 	}
-	t.Prompt = prompt
+	t.Context = contextSnapshot
 	return nil
+}
+
+func (t *Task) ClearPromptBundle() error {
+	contextSnapshot, err := t.Context.WithoutPromptBundle()
+	if err != nil {
+		return err
+	}
+	t.Context = contextSnapshot
+	return nil
+}
+
+func (t Task) PromptBundle() (PromptBundle, bool, error) {
+	return t.Context.PromptBundle()
+}
+
+func (t Task) promptReady() (bool, error) {
+	bundle, ok, err := t.PromptBundle()
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	return strings.TrimSpace(bundle.Prompt) != "", nil
 }
 
 func (t *Task) SetProgressMessageID(messageID string) {
@@ -183,8 +203,12 @@ func (t *Task) MarkDrawing(at time.Time) error {
 	if t.Status != StatusTranslating {
 		return fmt.Errorf("cannot move from %s to %s", t.Status, StatusDrawing)
 	}
-	if strings.TrimSpace(t.Prompt) == "" {
-		return fmt.Errorf("task prompt is required before drawing")
+	ready, err := t.promptReady()
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return fmt.Errorf("task prompt bundle is required before drawing")
 	}
 	if err := t.Timeline.MarkDrawing(at); err != nil {
 		return err
@@ -250,11 +274,15 @@ func (t Task) validateRestoredState() error {
 		return fmt.Errorf("task image is only allowed for completed tasks")
 	}
 
+	promptReady, err := t.promptReady()
+	if err != nil {
+		return err
+	}
 	switch {
-	case (t.Status == StatusDrawing || t.Status == StatusCompleted) && strings.TrimSpace(t.Prompt) == "":
-		return fmt.Errorf("task prompt is required before drawing")
-	case t.Timeline.DrawingStartedAt != nil && strings.TrimSpace(t.Prompt) == "":
-		return fmt.Errorf("task prompt is required once drawing has started")
+	case (t.Status == StatusDrawing || t.Status == StatusCompleted) && !promptReady:
+		return fmt.Errorf("task prompt bundle is required before drawing")
+	case t.Timeline.DrawingStartedAt != nil && !promptReady:
+		return fmt.Errorf("task prompt bundle is required once drawing has started")
 	}
 
 	switch {

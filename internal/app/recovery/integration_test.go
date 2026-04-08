@@ -76,8 +76,8 @@ func mustRecoverySQLiteTask(t *testing.T, id string, status domaintask.Status, c
 		if err := task.MarkTranslating(createdAt.Add(time.Second)); err != nil {
 			t.Fatalf("mark translating: %v", err)
 		}
-		if err := task.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-			t.Fatalf("set prompt: %v", err)
+		if err := task.SetPromptBundle(mustRecoverySQLitePromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+			t.Fatalf("set prompt bundle: %v", err)
 		}
 		if err := task.MarkDrawing(createdAt.Add(2 * time.Second)); err != nil {
 			t.Fatalf("mark drawing: %v", err)
@@ -87,8 +87,8 @@ func mustRecoverySQLiteTask(t *testing.T, id string, status domaintask.Status, c
 		if err := task.MarkTranslating(createdAt.Add(time.Second)); err != nil {
 			t.Fatalf("mark translating: %v", err)
 		}
-		if err := task.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-			t.Fatalf("set prompt: %v", err)
+		if err := task.SetPromptBundle(mustRecoverySQLitePromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+			t.Fatalf("set prompt bundle: %v", err)
 		}
 		if err := task.MarkDrawing(createdAt.Add(2 * time.Second)); err != nil {
 			t.Fatalf("mark drawing: %v", err)
@@ -115,4 +115,13 @@ func mustRecoverySQLiteTask(t *testing.T, id string, status domaintask.Status, c
 		t.Fatalf("unsupported status: %s", status)
 		return domaintask.Task{}
 	}
+}
+
+func mustRecoverySQLitePromptBundle(t *testing.T, prompt string) domaintask.PromptBundle {
+	t.Helper()
+	bundle, err := domaintask.NewPromptBundle(prompt, "", nil)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
 }

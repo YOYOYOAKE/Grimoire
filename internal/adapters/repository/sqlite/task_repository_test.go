@@ -26,7 +26,7 @@ func TestTaskRepositoryCreateAndGet(t *testing.T) {
 	if got.Status != domaintask.StatusQueued {
 		t.Fatalf("unexpected status: %s", got.Status)
 	}
-	if got.Context.Raw() != `{"version":1,"shape":"square"}` {
+	if got.Context.Raw() != `{"version":2,"shape":"square"}` {
 		t.Fatalf("unexpected context: %s", got.Context.Raw())
 	}
 }
@@ -45,8 +45,8 @@ func TestTaskRepositoryUpdatePersistsMutableFields(t *testing.T) {
 	if err := task.MarkTranslating(time.Unix(2, 0)); err != nil {
 		t.Fatalf("mark translating: %v", err)
 	}
-	if err := task.SetPrompt("masterpiece, castle"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := task.SetPromptBundle(mustTaskPromptBundle(t, "masterpiece, castle")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 	if err := task.MarkDrawing(time.Unix(3, 0)); err != nil {
 		t.Fatalf("mark drawing: %v", err)
@@ -67,8 +67,12 @@ func TestTaskRepositoryUpdatePersistsMutableFields(t *testing.T) {
 	if got.Status != domaintask.StatusCompleted {
 		t.Fatalf("unexpected status: %s", got.Status)
 	}
-	if got.Prompt != "masterpiece, castle" {
-		t.Fatalf("unexpected prompt: %q", got.Prompt)
+	bundle, ok, err := got.PromptBundle()
+	if err != nil {
+		t.Fatalf("prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, castle" {
+		t.Fatalf("unexpected prompt bundle: %#v ok=%v", bundle, ok)
 	}
 	if got.Image != "data/images/user-1/task-1.jpg" {
 		t.Fatalf("unexpected image: %q", got.Image)
@@ -145,8 +149,8 @@ func TestTaskRepositoryListRecoverable(t *testing.T) {
 	if err := drawing.MarkTranslating(time.Unix(5, 0)); err != nil {
 		t.Fatalf("mark translating: %v", err)
 	}
-	if err := drawing.SetPrompt("prompt"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := drawing.SetPromptBundle(mustTaskPromptBundle(t, "prompt")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 	if err := drawing.MarkDrawing(time.Unix(6, 0)); err != nil {
 		t.Fatalf("mark drawing: %v", err)
@@ -155,8 +159,8 @@ func TestTaskRepositoryListRecoverable(t *testing.T) {
 	if err := completed.MarkTranslating(time.Unix(8, 0)); err != nil {
 		t.Fatalf("mark translating: %v", err)
 	}
-	if err := completed.SetPrompt("prompt"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := completed.SetPromptBundle(mustTaskPromptBundle(t, "prompt")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 	if err := completed.MarkDrawing(time.Unix(9, 0)); err != nil {
 		t.Fatalf("mark drawing: %v", err)
@@ -258,7 +262,7 @@ func TestTaskRepositoryUsesTransactionConnection(t *testing.T) {
 func newTaskFixture(t *testing.T, id string, userID string, sessionID string, request string, createdAt time.Time) domaintask.Task {
 	t.Helper()
 
-	context, err := domaintask.NewContext(`{"version":1,"shape":"square"}`)
+	context, err := domaintask.NewContext(`{"version":2,"shape":"square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -267,4 +271,13 @@ func newTaskFixture(t *testing.T, id string, userID string, sessionID string, re
 		t.Fatalf("new task: %v", err)
 	}
 	return task
+}
+
+func mustTaskPromptBundle(t *testing.T, prompt string) domaintask.PromptBundle {
+	t.Helper()
+	bundle, err := domaintask.NewPromptBundle(prompt, "", nil)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
 }

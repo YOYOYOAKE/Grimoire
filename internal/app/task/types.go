@@ -1,6 +1,9 @@
 package task
 
-import domaintask "grimoire/internal/domain/task"
+import (
+	domaindraw "grimoire/internal/domain/draw"
+	domaintask "grimoire/internal/domain/task"
+)
 
 type CreateCommand struct {
 	UserID    string
@@ -22,6 +25,12 @@ type RetryCommand struct {
 type GetPromptCommand struct {
 	TaskID string
 	UserID string
+}
+
+type PromptDetails struct {
+	Prompt         string
+	NegativePrompt string
+	Characters     []domaindraw.CharacterPrompt
 }
 
 type TaskView struct {

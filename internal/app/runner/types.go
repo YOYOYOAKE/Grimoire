@@ -7,8 +7,8 @@ type RunCommand struct {
 }
 
 type StartDrawingCommand struct {
-	TaskID string
-	Prompt string
+	TaskID       string
+	PromptBundle *domaintask.PromptBundle
 }
 
 type CompleteCommand struct {

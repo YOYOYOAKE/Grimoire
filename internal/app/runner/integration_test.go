@@ -62,8 +62,12 @@ func TestRunWithSQLiteRepositoryPersistsCompletedTaskAndImage(t *testing.T) {
 	if stored.Image != "data/images/user-1/task-1.jpg" {
 		t.Fatalf("unexpected image path: %q", stored.Image)
 	}
-	if stored.Prompt != "artist:foo, moonlit_girl" {
-		t.Fatalf("unexpected prompt: %q", stored.Prompt)
+	bundle, ok, err := stored.PromptBundle()
+	if err != nil {
+		t.Fatalf("prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "artist:foo, moonlit_girl" {
+		t.Fatalf("unexpected prompt bundle: %#v ok=%v", bundle, ok)
 	}
 	if stored.ProgressMessageID != "progress-1" || stored.ResultMessageID != "result-1" {
 		t.Fatalf("unexpected message ids: progress=%q result=%q", stored.ProgressMessageID, stored.ResultMessageID)

@@ -255,7 +255,7 @@ func TestHandleTextCreatesTaskWhenConversationRequestsDrawing(t *testing.T) {
 	if tasks.got.Request != "draw a moonlit girl" {
 		t.Fatalf("unexpected task request: %q", tasks.got.Request)
 	}
-	if tasks.got.Context.Raw() != `{"version":1,"shape":"square","artists":"artist:foo"}` {
+	if tasks.got.Context.Raw() != `{"version":2,"shape":"square","artists":"artist:foo"}` {
 		t.Fatalf("unexpected task context: %q", tasks.got.Context.Raw())
 	}
 }

@@ -96,8 +96,8 @@ func TestStartDrawingPersistsPromptAndMovesTaskToDrawing(t *testing.T) {
 	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(3, 0).UTC() }, nil)
 
 	task, err := service.StartDrawing(context.Background(), StartDrawingCommand{
-		TaskID: "task-1",
-		Prompt: " masterpiece, moonlit_girl ",
+		TaskID:       "task-1",
+		PromptBundle: promptBundlePtr(t, " masterpiece, moonlit_girl "),
 	})
 	if err != nil {
 		t.Fatalf("start drawing: %v", err)
@@ -106,8 +106,12 @@ func TestStartDrawingPersistsPromptAndMovesTaskToDrawing(t *testing.T) {
 	if task.Status != domaintask.StatusDrawing {
 		t.Fatalf("unexpected status: %s", task.Status)
 	}
-	if task.Prompt != "masterpiece, moonlit_girl" {
-		t.Fatalf("unexpected prompt: %q", task.Prompt)
+	bundle, ok, err := task.PromptBundle()
+	if err != nil {
+		t.Fatalf("prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, moonlit_girl" {
+		t.Fatalf("unexpected prompt bundle: %#v ok=%v", bundle, ok)
 	}
 	if task.Timeline.DrawingStartedAt == nil || !task.Timeline.DrawingStartedAt.Equal(time.Unix(3, 0).UTC()) {
 		t.Fatalf("unexpected drawing timeline: %#v", task.Timeline)
@@ -127,12 +131,16 @@ func TestStartDrawingUsesExistingPromptForRetryTask(t *testing.T) {
 	if task.Status != domaintask.StatusDrawing {
 		t.Fatalf("unexpected status: %s", task.Status)
 	}
-	if task.Prompt != "masterpiece, moonlit_girl" {
-		t.Fatalf("unexpected prompt: %q", task.Prompt)
+	bundle, ok, err := task.PromptBundle()
+	if err != nil {
+		t.Fatalf("prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, moonlit_girl" {
+		t.Fatalf("unexpected prompt bundle: %#v ok=%v", bundle, ok)
 	}
 }
 
-func TestStartDrawingRejectsBlankPromptWithoutExistingPrompt(t *testing.T) {
+func TestStartDrawingRejectsBlankPromptWithoutExistingPromptBundle(t *testing.T) {
 	service := NewService(
 		&runnerTaskRepositoryStub{storedTask: mustRunnerTranslatingTask(t, "task-1", "")},
 		&runnerTxRunnerStub{},
@@ -283,7 +291,7 @@ func TestRequireRunDependencies(t *testing.T) {
 }
 
 func TestParseExecutionContext(t *testing.T) {
-	contextSnapshot, err := domaintask.NewContext(`{"shape":" square ","artists":" artist:foo "}`)
+	contextSnapshot, err := domaintask.NewContext(`{"version":2,"shape":" square ","artists":" artist:foo "}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -301,7 +309,7 @@ func TestParseExecutionContext(t *testing.T) {
 }
 
 func TestParseExecutionContextRejectsInvalidShape(t *testing.T) {
-	contextSnapshot, err := domaintask.NewContext(`{"shape":"invalid","artists":"artist:foo"}`)
+	contextSnapshot, err := domaintask.NewContext(`{"version":2,"shape":"invalid","artists":"artist:foo"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -313,7 +321,7 @@ func TestParseExecutionContextRejectsInvalidShape(t *testing.T) {
 
 func mustRunnerQueuedTask(t *testing.T, taskID string) domaintask.Task {
 	t.Helper()
-	contextSnapshot, err := domaintask.NewContext(`{"summary":{"topic":"moon"}}`)
+	contextSnapshot, err := domaintask.NewContext(`{"version":2,"shape":"square","artists":"artist:foo"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -327,13 +335,13 @@ func mustRunnerQueuedTask(t *testing.T, taskID string) domaintask.Task {
 func mustRunnerTranslatingTask(t *testing.T, taskID string, prompt string) domaintask.Task {
 	t.Helper()
 	task := mustRunnerQueuedTask(t, taskID)
-	if prompt != "" {
-		if err := task.SetPrompt(prompt); err != nil {
-			t.Fatalf("set prompt: %v", err)
-		}
-	}
 	if err := task.MarkTranslating(time.Unix(2, 0).UTC()); err != nil {
 		t.Fatalf("mark translating: %v", err)
+	}
+	if prompt != "" {
+		if err := task.SetPromptBundle(mustRunnerPromptBundle(t, prompt)); err != nil {
+			t.Fatalf("set prompt bundle: %v", err)
+		}
 	}
 	return task
 }
@@ -345,4 +353,19 @@ func mustRunnerDrawingTask(t *testing.T, taskID string) domaintask.Task {
 		t.Fatalf("mark drawing: %v", err)
 	}
 	return task
+}
+
+func mustRunnerPromptBundle(t *testing.T, prompt string) domaintask.PromptBundle {
+	t.Helper()
+	bundle, err := domaintask.NewPromptBundle(prompt, "", nil)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
+}
+
+func promptBundlePtr(t *testing.T, prompt string) *domaintask.PromptBundle {
+	t.Helper()
+	bundle := mustRunnerPromptBundle(t, prompt)
+	return &bundle
 }

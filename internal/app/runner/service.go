@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -24,8 +23,9 @@ var (
 )
 
 type executionContext struct {
-	Shape   domaindraw.Shape
-	Artists string
+	Shape        domaindraw.Shape
+	Artists      string
+	PromptBundle *domaintask.PromptBundle
 }
 
 type Service struct {
@@ -125,9 +125,8 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 		s.upsertProgressBestEffort(ctx, &task, translatingText(), true)
 	}
 
-	var translation *domaindraw.Translation
 	if task.Status == domaintask.StatusTranslating {
-		if strings.TrimSpace(task.Prompt) == "" {
+		if execContext.PromptBundle == nil {
 			s.logger.Info(
 				"runner translate requested",
 				append(runnerTaskAttrs(task),
@@ -141,12 +140,20 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 			if err := translated.Validate(); err != nil {
 				return s.failTask(ctx, task, "PROMPT_TRANSLATE_FAILED", "translating", err)
 			}
+			promptBundle, err := domaintask.NewPromptBundle(
+				mergeArtists(execContext.Artists, translated.Prompt),
+				translated.NegativePrompt,
+				translated.Characters,
+			)
+			if err != nil {
+				return s.failTask(ctx, task, "PROMPT_TRANSLATE_FAILED", "translating", err)
+			}
 			s.logger.Info(
 				"runner translate succeeded",
 				append(runnerTaskAttrs(task),
-					"translated_prompt", translated.Prompt,
-					"negative_prompt", translated.NegativePrompt,
-					"characters", translated.Characters,
+					"prompt", promptBundle.Prompt,
+					"negative_prompt", promptBundle.NegativePrompt,
+					"characters", promptBundle.Characters,
 				)...,
 			)
 			stopped, stopRequested, err := s.latestIfStopped(ctx, task.ID)
@@ -160,15 +167,14 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 			}
 
 			task, err = s.StartDrawing(ctx, StartDrawingCommand{
-				TaskID: task.ID,
-				Prompt: mergeArtists(execContext.Artists, translated.Prompt),
+				TaskID:       task.ID,
+				PromptBundle: &promptBundle,
 			})
 			if err != nil {
 				return err
 			}
-			translation = &translated
 		} else {
-			s.logger.Info("runner drawing using existing prompt", runnerTaskAttrs(task)...)
+			s.logger.Info("runner drawing using existing prompt bundle", runnerTaskAttrs(task)...)
 			task, err = s.StartDrawing(ctx, StartDrawingCommand{TaskID: task.ID})
 			if err != nil {
 				return err
@@ -188,13 +194,18 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 		return nil
 	}
 
-	request := domaindraw.GenerateRequest{
-		Prompt: task.Prompt,
-		Shape:  execContext.Shape,
+	promptBundle, ok, err := task.PromptBundle()
+	if err != nil {
+		return s.failTask(ctx, task, "INVALID_CONTEXT", "drawing", err)
 	}
-	if translation != nil {
-		request.NegativePrompt = translation.NegativePrompt
-		request.Characters = translation.Characters
+	if !ok {
+		return s.failTask(ctx, task, "INVALID_CONTEXT", "drawing", fmt.Errorf("task prompt bundle is required before image generation"))
+	}
+	request := domaindraw.GenerateRequest{
+		Prompt:         promptBundle.Prompt,
+		NegativePrompt: promptBundle.NegativePrompt,
+		Characters:     promptBundle.Characters,
+		Shape:          execContext.Shape,
 	}
 	s.logger.Info(
 		"runner image generation requested",
@@ -278,8 +289,8 @@ func (s *Service) StartTranslating(ctx context.Context, command RunCommand) (dom
 
 func (s *Service) StartDrawing(ctx context.Context, command StartDrawingCommand) (domaintask.Task, error) {
 	return s.updateTask(ctx, command.TaskID, func(task *domaintask.Task) error {
-		if prompt := strings.TrimSpace(command.Prompt); prompt != "" {
-			if err := task.SetPrompt(prompt); err != nil {
+		if command.PromptBundle != nil {
+			if err := task.SetPromptBundle(*command.PromptBundle); err != nil {
 				return err
 			}
 		}
@@ -352,21 +363,14 @@ func (s *Service) requireRunDependencies() error {
 }
 
 func parseExecutionContext(context domaintask.Context) (executionContext, error) {
-	var payload struct {
-		Shape   string `json:"shape"`
-		Artists string `json:"artists"`
-	}
-	if err := json.Unmarshal([]byte(context.Raw()), &payload); err != nil {
-		return executionContext{}, fmt.Errorf("decode task context: %w", err)
-	}
-
-	shape := domaindraw.Shape(strings.TrimSpace(payload.Shape))
-	if !shape.Valid() {
-		return executionContext{}, fmt.Errorf("task context shape is required")
+	parsed, err := context.Execution()
+	if err != nil {
+		return executionContext{}, err
 	}
 	return executionContext{
-		Shape:   shape,
-		Artists: strings.TrimSpace(payload.Artists),
+		Shape:        parsed.Shape,
+		Artists:      parsed.Artists,
+		PromptBundle: parsed.PromptBundle,
 	}, nil
 }
 
@@ -474,17 +478,34 @@ func mergeArtists(artists string, prompt string) string {
 }
 
 func runnerTaskAttrs(task domaintask.Task) []any {
-	return []any{
+	attrs := []any{
 		"task_id", task.ID,
 		"user_id", task.UserID,
 		"session_id", task.SessionID,
 		"source_task_id", task.SourceTaskID,
 		"status", task.Status,
 		"request", task.Request,
-		"prompt", task.Prompt,
 		"image", task.Image,
 		"task_context", task.Context.Raw(),
 		"progress_message_id", task.ProgressMessageID,
 		"result_message_id", task.ResultMessageID,
 	}
+	bundle, ok, err := task.PromptBundle()
+	switch {
+	case err != nil:
+		attrs = append(attrs, "prompt_bundle_error", err.Error())
+	case ok:
+		attrs = append(attrs,
+			"prompt", bundle.Prompt,
+			"negative_prompt", bundle.NegativePrompt,
+			"characters", bundle.Characters,
+		)
+	default:
+		attrs = append(attrs,
+			"prompt", "",
+			"negative_prompt", "",
+			"characters", []string{},
+		)
+	}
+	return attrs
 }

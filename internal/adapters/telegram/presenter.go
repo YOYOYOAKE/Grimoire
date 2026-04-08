@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	taskapp "grimoire/internal/app/task"
 	domaindraw "grimoire/internal/domain/draw"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
@@ -95,8 +96,26 @@ func buildStoppedTaskText() string {
 	return "已停止任务"
 }
 
-func buildPromptText(prompt string) string {
-	return fmt.Sprintf("Prompt\n%s", strings.TrimSpace(prompt))
+func buildPromptText(details taskapp.PromptDetails) string {
+	lines := []string{
+		"Prompt",
+		"",
+		"Global Prompt",
+		strings.TrimSpace(details.Prompt),
+		"",
+		"Negative Prompt",
+		displayPromptValue(details.NegativePrompt),
+	}
+	for index, character := range details.Characters {
+		lines = append(lines,
+			"",
+			fmt.Sprintf("Character %d", index+1),
+			"Prompt: "+displayPromptValue(character.Prompt),
+			"Negative Prompt: "+displayPromptValue(character.NegativePrompt),
+			"Position: "+displayPromptValue(character.Position),
+		)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func buildBalanceText(balance domainnai.AccountBalance) string {
@@ -120,4 +139,12 @@ func displayArtist(artist string) string {
 		return "未设置"
 	}
 	return artist
+}
+
+func displayPromptValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "无"
+	}
+	return value
 }

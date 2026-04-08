@@ -21,7 +21,6 @@ type taskRecord struct {
 	SessionID         string
 	SourceTask        sql.NullString
 	Request           string
-	Prompt            sql.NullString
 	Image             sql.NullString
 	Status            string
 	Error             sql.NullString
@@ -44,14 +43,13 @@ func (r *TaskRepository) Create(ctx context.Context, task domaintask.Task) error
 	_, err = ConnFromContext(ctx, r.db).ExecContext(
 		ctx,
 		`INSERT INTO tasks(
-			id, user_id, session_id, source_task, request, prompt, image, status, error, timeline, context, progress_message_id, result_message_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			id, user_id, session_id, source_task, request, image, status, error, timeline, context, progress_message_id, result_message_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		record.ID,
 		record.UserID,
 		record.SessionID,
 		record.SourceTask,
 		record.Request,
-		record.Prompt,
 		record.Image,
 		record.Status,
 		record.Error,
@@ -91,13 +89,13 @@ func (r *TaskRepository) Update(ctx context.Context, task domaintask.Task) error
 	_, err = ConnFromContext(ctx, r.db).ExecContext(
 		ctx,
 		`UPDATE tasks
-		SET prompt = ?, image = ?, status = ?, error = ?, timeline = ?, progress_message_id = ?, result_message_id = ?
+		SET image = ?, status = ?, error = ?, timeline = ?, context = ?, progress_message_id = ?, result_message_id = ?
 		WHERE id = ?`,
-		record.Prompt,
 		record.Image,
 		record.Status,
 		record.Error,
 		record.Timeline,
+		record.Context,
 		record.ProgressMessageID,
 		record.ResultMessageID,
 		record.ID,
@@ -111,7 +109,7 @@ func (r *TaskRepository) Update(ctx context.Context, task domaintask.Task) error
 func (r *TaskRepository) ListRecoverable(ctx context.Context) ([]domaintask.Task, error) {
 	rows, err := ConnFromContext(ctx, r.db).QueryContext(
 		ctx,
-		`SELECT id, user_id, session_id, source_task, request, prompt, image, status, error, timeline, context, progress_message_id, result_message_id
+		`SELECT id, user_id, session_id, source_task, request, image, status, error, timeline, context, progress_message_id, result_message_id
 		FROM tasks
 		WHERE status IN (?, ?, ?)`,
 		string(domaintask.StatusQueued),
@@ -139,7 +137,7 @@ func (r *TaskRepository) ListBySourceTask(ctx context.Context, sourceTaskID stri
 
 	rows, err := ConnFromContext(ctx, r.db).QueryContext(
 		ctx,
-		`SELECT id, user_id, session_id, source_task, request, prompt, image, status, error, timeline, context, progress_message_id, result_message_id
+		`SELECT id, user_id, session_id, source_task, request, image, status, error, timeline, context, progress_message_id, result_message_id
 		FROM tasks
 		WHERE source_task = ?`,
 		sourceTaskID,
@@ -165,7 +163,7 @@ func (r *TaskRepository) getRecord(ctx context.Context, id string) (taskRecord, 
 
 	row := ConnFromContext(ctx, r.db).QueryRowContext(
 		ctx,
-		`SELECT id, user_id, session_id, source_task, request, prompt, image, status, error, timeline, context, progress_message_id, result_message_id
+		`SELECT id, user_id, session_id, source_task, request, image, status, error, timeline, context, progress_message_id, result_message_id
 		FROM tasks
 		WHERE id = ?`,
 		id,
@@ -178,7 +176,6 @@ func (r *TaskRepository) getRecord(ctx context.Context, id string) (taskRecord, 
 		&record.SessionID,
 		&record.SourceTask,
 		&record.Request,
-		&record.Prompt,
 		&record.Image,
 		&record.Status,
 		&record.Error,
@@ -199,7 +196,6 @@ func encodeTask(task domaintask.Task) (taskRecord, error) {
 		task.SessionID,
 		task.SourceTaskID,
 		task.Request,
-		task.Prompt,
 		task.Image,
 		task.Status,
 		task.Error,
@@ -232,7 +228,6 @@ func encodeTask(task domaintask.Task) (taskRecord, error) {
 		SessionID:         normalized.SessionID,
 		SourceTask:        nullableTaskString(normalized.SourceTaskID),
 		Request:           normalized.Request,
-		Prompt:            nullableTaskString(normalized.Prompt),
 		Image:             nullableTaskString(normalized.Image),
 		Status:            string(normalized.Status),
 		Error:             taskErrorJSON,
@@ -269,7 +264,6 @@ func decodeTask(record taskRecord) (domaintask.Task, error) {
 		record.SessionID,
 		taskString(record.SourceTask),
 		record.Request,
-		taskString(record.Prompt),
 		taskString(record.Image),
 		domaintask.Status(record.Status),
 		taskError,
@@ -294,7 +288,6 @@ func scanTasks(rows *sql.Rows) ([]domaintask.Task, error) {
 			&record.SessionID,
 			&record.SourceTask,
 			&record.Request,
-			&record.Prompt,
 			&record.Image,
 			&record.Status,
 			&record.Error,
@@ -328,8 +321,6 @@ func ensureTaskImmutableFields(existing taskRecord, updated taskRecord) error {
 		return fmt.Errorf("update task %s: task source_task is immutable", updated.ID)
 	case existing.Request != updated.Request:
 		return fmt.Errorf("update task %s: task request is immutable", updated.ID)
-	case existing.Context != updated.Context:
-		return fmt.Errorf("update task %s: task context is immutable", updated.ID)
 	default:
 		return nil
 	}

@@ -144,7 +144,6 @@ func (s *Service) retry(ctx context.Context, command RetryCommand, reusePrompt b
 			"session_id", source.SessionID,
 			"request", source.Request,
 			"task_context", source.Context.Raw(),
-			"prompt", source.Prompt,
 			"reuse_prompt", reusePrompt,
 		)
 
@@ -163,9 +162,22 @@ func (s *Service) retry(ctx context.Context, command RetryCommand, reusePrompt b
 			return domaintask.Task{}, err
 		}
 		if reusePrompt {
-			if err := task.SetPrompt(source.Prompt); err != nil {
+			bundle, ok, err := source.PromptBundle()
+			if err != nil {
 				return domaintask.Task{}, err
 			}
+			if !ok {
+				return domaintask.Task{}, fmt.Errorf("task prompt bundle is required for retry draw")
+			}
+			if err := task.SetPromptBundle(bundle); err != nil {
+				return domaintask.Task{}, err
+			}
+		} else {
+			contextSnapshot, err := source.Context.WithoutPromptBundle()
+			if err != nil {
+				return domaintask.Task{}, err
+			}
+			task.Context = contextSnapshot
 		}
 		return task, nil
 	})
@@ -217,12 +229,23 @@ func (s *Service) Get(ctx context.Context, taskID string) (domaintask.Task, erro
 	return s.tasks.Get(ctx, taskID)
 }
 
-func (s *Service) GetPrompt(ctx context.Context, command GetPromptCommand) (string, error) {
+func (s *Service) GetPrompt(ctx context.Context, command GetPromptCommand) (PromptDetails, error) {
 	task, err := s.loadOwnedTask(ctx, command.TaskID, command.UserID)
 	if err != nil {
-		return "", err
+		return PromptDetails{}, err
 	}
-	return task.Prompt, nil
+	bundle, ok, err := task.PromptBundle()
+	if err != nil {
+		return PromptDetails{}, err
+	}
+	if !ok {
+		return PromptDetails{}, nil
+	}
+	return PromptDetails{
+		Prompt:         bundle.Prompt,
+		NegativePrompt: bundle.NegativePrompt,
+		Characters:     bundle.Characters,
+	}, nil
 }
 
 func (s *Service) loadOwnedTask(ctx context.Context, taskID string, userID string) (domaintask.Task, error) {
@@ -241,14 +264,31 @@ func (s *Service) loadOwnedTask(ctx context.Context, taskID string, userID strin
 }
 
 func taskLogAttrs(task domaintask.Task) []any {
-	return []any{
+	attrs := []any{
 		"task_id", task.ID,
 		"user_id", task.UserID,
 		"session_id", task.SessionID,
 		"source_task_id", task.SourceTaskID,
 		"request", task.Request,
-		"prompt", task.Prompt,
 		"status", task.Status,
 		"task_context", task.Context.Raw(),
 	}
+	bundle, ok, err := task.PromptBundle()
+	switch {
+	case err != nil:
+		attrs = append(attrs, "prompt_bundle_error", err.Error())
+	case ok:
+		attrs = append(attrs,
+			"prompt", bundle.Prompt,
+			"negative_prompt", bundle.NegativePrompt,
+			"characters", bundle.Characters,
+		)
+	default:
+		attrs = append(attrs,
+			"prompt", "",
+			"negative_prompt", "",
+			"characters", []string{},
+		)
+	}
+	return attrs
 }

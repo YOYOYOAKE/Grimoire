@@ -79,7 +79,7 @@ func TestHandleMessageWithSQLiteChatServicesCreatesTaskFromConversationToolCall(
 	if stored.Request != "绘制一位月下少女，夜景氛围，纵向构图。" {
 		t.Fatalf("unexpected request: %q", stored.Request)
 	}
-	if stored.Context.Raw() != `{"version":1,"shape":"portrait","artists":"artist:foo"}` {
+	if stored.Context.Raw() != `{"version":2,"shape":"portrait","artists":"artist:foo"}` {
 		t.Fatalf("unexpected task context: %q", stored.Context.Raw())
 	}
 	if len(scheduler.taskIDs) != 1 || scheduler.taskIDs[0] != "task-confirm" {
@@ -166,8 +166,10 @@ func TestHandleRetryCallbacksWithSQLiteTaskServiceCreateDerivedTasks(t *testing.
 	if retryTranslate.SourceTaskID != "task-source" {
 		t.Fatalf("unexpected retry translate source: %q", retryTranslate.SourceTaskID)
 	}
-	if retryTranslate.Prompt != "" {
-		t.Fatalf("expected retry translate to clear prompt, got %q", retryTranslate.Prompt)
+	if _, ok, err := retryTranslate.PromptBundle(); err != nil {
+		t.Fatalf("retry translate prompt bundle: %v", err)
+	} else if ok {
+		t.Fatal("expected retry translate to clear prompt bundle")
 	}
 
 	bot.handleCallbackQuery(ctx, CallbackQuery{
@@ -187,8 +189,19 @@ func TestHandleRetryCallbacksWithSQLiteTaskServiceCreateDerivedTasks(t *testing.
 	if retryDraw.SourceTaskID != "task-source" {
 		t.Fatalf("unexpected retry draw source: %q", retryDraw.SourceTaskID)
 	}
-	if retryDraw.Prompt != source.Prompt {
-		t.Fatalf("unexpected retry draw prompt: %q", retryDraw.Prompt)
+	sourceBundle, ok, err := source.PromptBundle()
+	if err != nil {
+		t.Fatalf("source prompt bundle: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected source prompt bundle")
+	}
+	retryBundle, ok, err := retryDraw.PromptBundle()
+	if err != nil {
+		t.Fatalf("retry draw prompt bundle: %v", err)
+	}
+	if !ok || retryBundle.Prompt != sourceBundle.Prompt {
+		t.Fatalf("unexpected retry draw prompt bundle: %#v ok=%v", retryBundle, ok)
 	}
 	if len(scheduler.taskIDs) != 2 || scheduler.taskIDs[0] != "task-retry-translate" || scheduler.taskIDs[1] != "task-retry-draw" {
 		t.Fatalf("unexpected scheduled task ids: %#v", scheduler.taskIDs)
@@ -272,7 +285,7 @@ func newSQLiteBackedTestBot(
 func mustTelegramTaskAtStatus(t *testing.T, id string, status domaintask.Status, createdAt time.Time) domaintask.Task {
 	t.Helper()
 
-	contextSnapshot, err := domaintask.NewContext(`{"version":1,"shape":"small-square"}`)
+	contextSnapshot, err := domaintask.NewContext(`{"version":2,"shape":"small-square"}`)
 	if err != nil {
 		t.Fatalf("new context: %v", err)
 	}
@@ -288,8 +301,8 @@ func mustTelegramTaskAtStatus(t *testing.T, id string, status domaintask.Status,
 		if err := task.MarkTranslating(createdAt.Add(time.Second)); err != nil {
 			t.Fatalf("mark translating: %v", err)
 		}
-		if err := task.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-			t.Fatalf("set prompt: %v", err)
+		if err := task.SetPromptBundle(mustTelegramPromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+			t.Fatalf("set prompt bundle: %v", err)
 		}
 		if err := task.MarkDrawing(createdAt.Add(2 * time.Second)); err != nil {
 			t.Fatalf("mark drawing: %v", err)
@@ -299,8 +312,8 @@ func mustTelegramTaskAtStatus(t *testing.T, id string, status domaintask.Status,
 		if err := task.MarkTranslating(createdAt.Add(time.Second)); err != nil {
 			t.Fatalf("mark translating: %v", err)
 		}
-		if err := task.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-			t.Fatalf("set prompt: %v", err)
+		if err := task.SetPromptBundle(mustTelegramPromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+			t.Fatalf("set prompt bundle: %v", err)
 		}
 		if err := task.MarkDrawing(createdAt.Add(2 * time.Second)); err != nil {
 			t.Fatalf("mark drawing: %v", err)
@@ -313,4 +326,13 @@ func mustTelegramTaskAtStatus(t *testing.T, id string, status domaintask.Status,
 		t.Fatalf("unsupported task status: %s", status)
 		return domaintask.Task{}
 	}
+}
+
+func mustTelegramPromptBundle(t *testing.T, prompt string) domaintask.PromptBundle {
+	t.Helper()
+	bundle, err := domaintask.NewPromptBundle(prompt, "", nil)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
 }

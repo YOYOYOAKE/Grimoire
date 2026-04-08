@@ -94,14 +94,14 @@ func (n *acceptanceNotifier) DeleteMessage(_ context.Context, _ string, messageI
 }
 
 type acceptanceHarness struct {
-	bot              *Bot
-	buffer           *bytes.Buffer
-	db               *sql.DB
-	taskRepo         *sqliterepo.TaskRepository
-	taskService      *taskapp.Service
-	runnerService    *runnerapp.Service
-	scheduler        *telegramSchedulerStub
-	notifier         *acceptanceNotifier
+	bot           *Bot
+	buffer        *bytes.Buffer
+	db            *sql.DB
+	taskRepo      *sqliterepo.TaskRepository
+	taskService   *taskapp.Service
+	runnerService *runnerapp.Service
+	scheduler     *telegramSchedulerStub
+	notifier      *acceptanceNotifier
 }
 
 func TestAcceptanceChatConfirmRunPromptAndRetryFlow(t *testing.T) {
@@ -148,8 +148,12 @@ func TestAcceptanceChatConfirmRunPromptAndRetryFlow(t *testing.T) {
 	if stored.Status != domaintask.StatusCompleted {
 		t.Fatalf("unexpected task status: %s", stored.Status)
 	}
-	if strings.TrimSpace(stored.Prompt) == "" {
-		t.Fatal("expected completed task prompt")
+	storedBundle, ok, err := stored.PromptBundle()
+	if err != nil {
+		t.Fatalf("stored prompt bundle: %v", err)
+	}
+	if !ok || strings.TrimSpace(storedBundle.Prompt) == "" {
+		t.Fatal("expected completed task prompt bundle")
 	}
 	if len(harness.notifier.sentImages) != 1 {
 		t.Fatalf("expected one result image notification, got %#v", harness.notifier.sentImages)
@@ -166,7 +170,7 @@ func TestAcceptanceChatConfirmRunPromptAndRetryFlow(t *testing.T) {
 		Data: "task:prompt:" + taskID,
 	})
 	promptOutput := harness.buffer.String()
-	if !strings.Contains(promptOutput, "Prompt") || !strings.Contains(promptOutput, stored.Prompt) {
+	if !strings.Contains(promptOutput, "Global Prompt") || !strings.Contains(promptOutput, storedBundle.Prompt) {
 		t.Fatalf("expected prompt message in output, got %s", promptOutput)
 	}
 
@@ -191,8 +195,12 @@ func TestAcceptanceChatConfirmRunPromptAndRetryFlow(t *testing.T) {
 	if retryTask.SourceTaskID != taskID {
 		t.Fatalf("unexpected retry source: %q", retryTask.SourceTaskID)
 	}
-	if retryTask.Prompt != stored.Prompt {
-		t.Fatalf("expected retry draw to reuse prompt %q, got %q", stored.Prompt, retryTask.Prompt)
+	retryBundle, ok, err := retryTask.PromptBundle()
+	if err != nil {
+		t.Fatalf("retry task prompt bundle: %v", err)
+	}
+	if !ok || retryBundle.Prompt != storedBundle.Prompt {
+		t.Fatalf("expected retry draw to reuse prompt %q, got %#v", storedBundle.Prompt, retryBundle)
 	}
 	if err := harness.runnerService.Run(ctx, runnerapp.RunCommand{TaskID: retryTaskID}); err != nil {
 		t.Fatalf("run retry task: %v", err)
@@ -344,14 +352,14 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 	bot.SetBalanceService(&balanceServiceMock{})
 
 	return acceptanceHarness{
-		bot:              bot,
-		buffer:           buffer,
-		db:               db,
-		taskRepo:         taskRepo,
-		taskService:      taskService,
-		runnerService:    runnerService,
-		scheduler:        scheduler,
-		notifier:         notifier,
+		bot:           bot,
+		buffer:        buffer,
+		db:            db,
+		taskRepo:      taskRepo,
+		taskService:   taskService,
+		runnerService: runnerService,
+		scheduler:     scheduler,
+		notifier:      notifier,
 	}
 }
 

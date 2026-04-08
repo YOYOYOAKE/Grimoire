@@ -133,6 +133,37 @@ func indexExists(t *testing.T, db *sql.DB, index string) bool {
 	return count == 1
 }
 
+func columnExists(t *testing.T, db *sql.DB, table string, column string) bool {
+	t.Helper()
+
+	rows, err := db.QueryContext(context.Background(), "PRAGMA table_info("+table+")")
+	if err != nil {
+		t.Fatalf("query table info for %s: %v", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &pk); err != nil {
+			t.Fatalf("scan table info for %s: %v", table, err)
+		}
+		if name == column {
+			return true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate table info for %s: %v", table, err)
+	}
+	return false
+}
+
 func queryString(t *testing.T, db *sql.DB, query string, args ...any) string {
 	t.Helper()
 

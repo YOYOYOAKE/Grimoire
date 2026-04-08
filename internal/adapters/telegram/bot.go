@@ -37,7 +37,7 @@ type AccessService interface {
 type TaskService interface {
 	Create(ctx context.Context, command taskapp.CreateCommand) (domaintask.Task, error)
 	Stop(ctx context.Context, command taskapp.StopCommand) (domaintask.Task, error)
-	GetPrompt(ctx context.Context, command taskapp.GetPromptCommand) (string, error)
+	GetPrompt(ctx context.Context, command taskapp.GetPromptCommand) (taskapp.PromptDetails, error)
 	RetryTranslate(ctx context.Context, command taskapp.RetryCommand) (domaintask.Task, error)
 	RetryDraw(ctx context.Context, command taskapp.RetryCommand) (domaintask.Task, error)
 }

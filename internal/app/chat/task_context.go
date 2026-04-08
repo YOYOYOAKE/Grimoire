@@ -15,7 +15,7 @@ func buildTaskContext(preference domainpreferences.Preference) (domaintask.Conte
 		Shape   string `json:"shape"`
 		Artists string `json:"artists,omitempty"`
 	}{
-		Version: 1,
+		Version: 2,
 		Shape:   string(preference.Shape),
 		Artists: preference.Artists,
 	})

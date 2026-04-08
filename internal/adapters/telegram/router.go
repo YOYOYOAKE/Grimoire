@@ -272,8 +272,7 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 			b.answerCallbackQueryBestEffort(ctx, query.ID, "查看 prompt 失败", true)
 			return
 		}
-		prompt = strings.TrimSpace(prompt)
-		if prompt == "" {
+		if strings.TrimSpace(prompt.Prompt) == "" {
 			b.answerCallbackQueryBestEffort(ctx, query.ID, "当前任务没有 prompt", true)
 			return
 		}
@@ -282,7 +281,15 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 			b.logWarn("send prompt message failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
 			return
 		}
-		b.logInfo("telegram task prompt sent", "callback_id", query.ID, "task_id", action.TaskID, "user_id", userID, "prompt", prompt)
+		b.logInfo(
+			"telegram task prompt sent",
+			"callback_id", query.ID,
+			"task_id", action.TaskID,
+			"user_id", userID,
+			"prompt", prompt.Prompt,
+			"negative_prompt", prompt.NegativePrompt,
+			"characters", prompt.Characters,
+		)
 	case taskActionRetryTranslate:
 		if _, err := b.taskService.RetryTranslate(ctx, taskapp.RetryCommand{TaskID: action.TaskID, UserID: userID}); err != nil {
 			b.logWarn("retry translate task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)

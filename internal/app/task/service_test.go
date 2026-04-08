@@ -10,6 +10,7 @@ import (
 	"time"
 
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
+	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domaintask "grimoire/internal/domain/task"
 	sqlitefixture "grimoire/internal/testsupport/sqlitefixture"
@@ -302,8 +303,12 @@ func TestStopMarksTaskStoppedWithinTransaction(t *testing.T) {
 	if repository.updated.Status != domaintask.StatusStopped {
 		t.Fatalf("unexpected persisted status: %s", repository.updated.Status)
 	}
-	if repository.updated.Prompt != "masterpiece, moonlit_girl" {
-		t.Fatalf("unexpected persisted prompt: %q", repository.updated.Prompt)
+	bundle, ok, err := repository.updated.PromptBundle()
+	if err != nil {
+		t.Fatalf("updated prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, moonlit_girl" {
+		t.Fatalf("unexpected persisted prompt bundle: %#v ok=%v", bundle, ok)
 	}
 	expectedOrder := []string{"tx:start", "repo:get", "repo:update", "tx:commit"}
 	if fmt.Sprintf("%v", order) != fmt.Sprintf("%v", expectedOrder) {
@@ -396,10 +401,12 @@ func TestRetryTranslateCreatesChildTaskAndClearsPrompt(t *testing.T) {
 	if task.SourceTaskID != "task-1" {
 		t.Fatalf("unexpected source task id: %q", task.SourceTaskID)
 	}
-	if task.Prompt != "" {
-		t.Fatalf("expected prompt to be cleared, got %q", task.Prompt)
+	if _, ok, err := task.PromptBundle(); err != nil {
+		t.Fatalf("prompt bundle: %v", err)
+	} else if ok {
+		t.Fatal("expected prompt bundle to be cleared")
 	}
-	if task.Request != source.Request || task.Context.Raw() != source.Context.Raw() {
+	if task.Request != source.Request {
 		t.Fatalf("retry task did not preserve source snapshot: %#v", task)
 	}
 	if task.Status != domaintask.StatusQueued {
@@ -469,8 +476,12 @@ func TestRetryDrawCreatesChildTaskAndReusesPrompt(t *testing.T) {
 	if task.SourceTaskID != "task-1" {
 		t.Fatalf("unexpected source task id: %q", task.SourceTaskID)
 	}
-	if task.Prompt != "masterpiece, moonlit_girl" {
-		t.Fatalf("unexpected prompt: %q", task.Prompt)
+	bundle, ok, err := task.PromptBundle()
+	if err != nil {
+		t.Fatalf("task prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, moonlit_girl" {
+		t.Fatalf("unexpected prompt bundle: %#v ok=%v", bundle, ok)
 	}
 }
 
@@ -481,8 +492,8 @@ func TestRetryDrawReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
 	sqlitefixture.CreateUserAndSession(t, db, "user-1", "session-1", domainpreferences.DefaultPreference())
 
 	source := mustTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC())
-	if err := source.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := source.SetPromptBundle(mustTaskPromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 	if err := taskRepo.Create(context.Background(), source); err != nil {
 		t.Fatalf("create source task: %v", err)
@@ -510,12 +521,16 @@ func TestRetryDrawReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
 	if stored.SourceTaskID != "task-1" {
 		t.Fatalf("unexpected persisted source task: %q", stored.SourceTaskID)
 	}
-	if stored.Prompt != "masterpiece, moonlit_girl" {
-		t.Fatalf("unexpected persisted prompt: %q", stored.Prompt)
+	bundle, ok, err := stored.PromptBundle()
+	if err != nil {
+		t.Fatalf("stored prompt bundle: %v", err)
+	}
+	if !ok || bundle.Prompt != "masterpiece, moonlit_girl" {
+		t.Fatalf("unexpected persisted prompt bundle: %#v ok=%v", bundle, ok)
 	}
 }
 
-func TestRetryDrawRejectsSourceWithoutPrompt(t *testing.T) {
+func TestRetryDrawRejectsSourceWithoutPromptBundle(t *testing.T) {
 	repository := &taskRepositoryStub{
 		storedTask: mustTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC()),
 	}
@@ -582,10 +597,15 @@ func TestGetRejectsBlankTaskID(t *testing.T) {
 	}
 }
 
-func TestGetPromptReturnsPrompt(t *testing.T) {
+func TestGetPromptReturnsPromptDetails(t *testing.T) {
 	taskFixture := mustTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC())
-	if err := taskFixture.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := taskFixture.SetPromptBundle(mustTaskPromptBundleWithDetails(
+		t,
+		"masterpiece, moonlit_girl",
+		"blurry",
+		[]domaindraw.CharacterPrompt{{Prompt: "kinich_(genshin_impact)", NegativePrompt: "extra_arms", Position: "C3"}},
+	)); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 
 	service := NewService(
@@ -601,15 +621,21 @@ func TestGetPromptReturnsPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get prompt: %v", err)
 	}
-	if prompt != "masterpiece, moonlit_girl" {
-		t.Fatalf("unexpected prompt: %q", prompt)
+	if prompt.Prompt != "masterpiece, moonlit_girl" {
+		t.Fatalf("unexpected prompt: %q", prompt.Prompt)
+	}
+	if prompt.NegativePrompt != "blurry" {
+		t.Fatalf("unexpected negative prompt: %q", prompt.NegativePrompt)
+	}
+	if len(prompt.Characters) != 1 || prompt.Characters[0].Position != "C3" {
+		t.Fatalf("unexpected characters: %#v", prompt.Characters)
 	}
 }
 
 func TestGetPromptRejectsTaskOwnedByAnotherUser(t *testing.T) {
 	taskFixture := mustTaskFixture(t, "task-1", "user-2", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC())
-	if err := taskFixture.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := taskFixture.SetPromptBundle(mustTaskPromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 
 	service := NewService(
@@ -638,7 +664,7 @@ func mustTaskContext(t *testing.T, raw string) domaintask.Context {
 
 func mustTaskFixture(t *testing.T, id string, userID string, sessionID string, request string, createdAt time.Time) domaintask.Task {
 	t.Helper()
-	task, err := domaintask.New(id, userID, sessionID, request, mustTaskContext(t, `{"summary":{"topic":"moon"}}`), createdAt)
+	task, err := domaintask.New(id, userID, sessionID, request, mustTaskContext(t, `{"version":2,"shape":"square","artists":"artist:foo"}`), createdAt)
 	if err != nil {
 		t.Fatalf("new task: %v", err)
 	}
@@ -648,8 +674,8 @@ func mustTaskFixture(t *testing.T, id string, userID string, sessionID string, r
 func mustDrawingTaskFixture(t *testing.T, id string, userID string, sessionID string, request string) domaintask.Task {
 	t.Helper()
 	task := mustTaskFixture(t, id, userID, sessionID, request, time.Unix(1, 0).UTC())
-	if err := task.SetPrompt("masterpiece, moonlit_girl"); err != nil {
-		t.Fatalf("set prompt: %v", err)
+	if err := task.SetPromptBundle(mustTaskPromptBundle(t, "masterpiece, moonlit_girl")); err != nil {
+		t.Fatalf("set prompt bundle: %v", err)
 	}
 	if err := task.MarkTranslating(time.Unix(2, 0).UTC()); err != nil {
 		t.Fatalf("mark translating: %v", err)
@@ -658,4 +684,18 @@ func mustDrawingTaskFixture(t *testing.T, id string, userID string, sessionID st
 		t.Fatalf("mark drawing: %v", err)
 	}
 	return task
+}
+
+func mustTaskPromptBundle(t *testing.T, prompt string) domaintask.PromptBundle {
+	t.Helper()
+	return mustTaskPromptBundleWithDetails(t, prompt, "", nil)
+}
+
+func mustTaskPromptBundleWithDetails(t *testing.T, prompt string, negative string, characters []domaindraw.CharacterPrompt) domaintask.PromptBundle {
+	t.Helper()
+	bundle, err := domaintask.NewPromptBundle(prompt, negative, characters)
+	if err != nil {
+		t.Fatalf("new prompt bundle: %v", err)
+	}
+	return bundle
 }
