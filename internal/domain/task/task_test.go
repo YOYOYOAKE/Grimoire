@@ -305,6 +305,76 @@ func TestRestoreStoppedTaskRejectsMissingPromptAfterDrawing(t *testing.T) {
 	}
 }
 
+func TestSetMessageIDsTrimWhitespace(t *testing.T) {
+	task := newTestTask(t)
+
+	task.SetProgressMessageID(" progress-1 ")
+	task.SetResultMessageID(" result-1 ")
+
+	if task.ProgressMessageID != "progress-1" {
+		t.Fatalf("unexpected progress message id: %q", task.ProgressMessageID)
+	}
+	if task.ResultMessageID != "result-1" {
+		t.Fatalf("unexpected result message id: %q", task.ResultMessageID)
+	}
+}
+
+func TestContextRawReturnsNormalizedJSON(t *testing.T) {
+	context, err := NewContext(` {"version":1} `)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+
+	if context.Raw() != `{"version":1}` {
+		t.Fatalf("unexpected raw context: %q", context.Raw())
+	}
+}
+
+func TestValidateTimelineForStatusRejectsInvalidCombinations(t *testing.T) {
+	tests := []struct {
+		name     string
+		status   Status
+		timeline Timeline
+	}{
+		{
+			name:     "translating requires translating timestamp",
+			status:   StatusTranslating,
+			timeline: mustNewTimeline(t, time.Unix(1, 0)),
+		},
+		{
+			name:   "completed rejects failed timestamp",
+			status: StatusCompleted,
+			timeline: Timeline{
+				CreatedAt:            time.Unix(1, 0),
+				UpdatedAt:            time.Unix(4, 0),
+				TranslatingStartedAt: timePtr(time.Unix(2, 0)),
+				DrawingStartedAt:     timePtr(time.Unix(3, 0)),
+				CompletedAt:          timePtr(time.Unix(4, 0)),
+				FailedAt:             timePtr(time.Unix(5, 0)),
+			},
+		},
+		{
+			name:   "stopped rejects completed timestamp",
+			status: StatusStopped,
+			timeline: Timeline{
+				CreatedAt:            time.Unix(1, 0),
+				UpdatedAt:            time.Unix(4, 0),
+				TranslatingStartedAt: timePtr(time.Unix(2, 0)),
+				StoppedAt:            timePtr(time.Unix(4, 0)),
+				CompletedAt:          timePtr(time.Unix(5, 0)),
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateTimelineForStatus(tt.status, tt.timeline); err == nil {
+				t.Fatal("expected error")
+			}
+		})
+	}
+}
+
 func newTestTask(t *testing.T) Task {
 	t.Helper()
 

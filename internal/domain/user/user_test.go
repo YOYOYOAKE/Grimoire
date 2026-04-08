@@ -63,3 +63,51 @@ func TestSetRoleRejectsInvalidValue(t *testing.T) {
 		t.Fatalf("unexpected role after failed update: %q", u.Role)
 	}
 }
+
+func TestSetRoleUpdatesRole(t *testing.T) {
+	u, err := New("123", RoleNormal, domainpreferences.DefaultPreference())
+	if err != nil {
+		t.Fatalf("new user: %v", err)
+	}
+
+	if err := u.SetRole(RoleBanned); err != nil {
+		t.Fatalf("set role: %v", err)
+	}
+	if u.Role != RoleBanned {
+		t.Fatalf("unexpected role: %q", u.Role)
+	}
+}
+
+func TestSetPreferenceUpdatesPreference(t *testing.T) {
+	u, err := New("123", RoleNormal, domainpreferences.DefaultPreference())
+	if err != nil {
+		t.Fatalf("new user: %v", err)
+	}
+
+	preference, err := domainpreferences.New(domaindraw.ShapeLandscape, "artist:foo")
+	if err != nil {
+		t.Fatalf("new preference: %v", err)
+	}
+	if err := u.SetPreference(preference); err != nil {
+		t.Fatalf("set preference: %v", err)
+	}
+	if u.Preference != preference {
+		t.Fatalf("unexpected preference: %#v", u.Preference)
+	}
+}
+
+func TestSetPreferenceRejectsInvalidPreference(t *testing.T) {
+	u, err := New("123", RoleNormal, domainpreferences.DefaultPreference())
+	if err != nil {
+		t.Fatalf("new user: %v", err)
+	}
+
+	preference := domainpreferences.DefaultPreference()
+	preference.Shape = domaindraw.Shape("invalid")
+	if err := u.SetPreference(preference); err == nil {
+		t.Fatal("expected error")
+	}
+	if u.Preference != domainpreferences.DefaultPreference() {
+		t.Fatalf("unexpected preference after failed update: %#v", u.Preference)
+	}
+}

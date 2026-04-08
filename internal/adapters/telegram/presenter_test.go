@@ -36,6 +36,15 @@ func TestImageMenuMarkupUsesRequestCallbackProtocol(t *testing.T) {
 	}
 }
 
+func TestBuildArtistsPromptText(t *testing.T) {
+	text := buildArtistsPromptText()
+	for _, expected := range []string{"请发送新的画师串", "/start 取消"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected %q in text, got %s", expected, text)
+		}
+	}
+}
+
 func TestBuildBalanceText(t *testing.T) {
 	text := buildBalanceText(domainnai.AccountBalance{
 		PurchasedTrainingSteps: 321,

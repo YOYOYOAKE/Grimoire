@@ -12,6 +12,16 @@ func TestNewRejectsInvalidShape(t *testing.T) {
 	}
 }
 
+func TestNewTrimsArtists(t *testing.T) {
+	preference, err := New(domaindraw.ShapePortrait, " artist:foo ")
+	if err != nil {
+		t.Fatalf("new preference: %v", err)
+	}
+	if preference.Artists != "artist:foo" {
+		t.Fatalf("unexpected artists: %q", preference.Artists)
+	}
+}
+
 func TestSetShapeRejectsInvalidShape(t *testing.T) {
 	preference := DefaultPreference()
 
@@ -29,6 +39,17 @@ func TestSetArtistsTrimsWhitespace(t *testing.T) {
 
 	if preference.Artists != "artist:foo" {
 		t.Fatalf("unexpected artists: %q", preference.Artists)
+	}
+}
+
+func TestClearArtistsResetsArtists(t *testing.T) {
+	preference := DefaultPreference()
+	preference.SetArtists("artist:foo")
+
+	preference.ClearArtists()
+
+	if preference.Artists != "" {
+		t.Fatalf("unexpected artists after clear: %q", preference.Artists)
 	}
 }
 

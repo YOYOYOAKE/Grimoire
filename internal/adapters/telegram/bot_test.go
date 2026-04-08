@@ -448,6 +448,44 @@ func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
 	}
 }
 
+func TestSendTextUsesSendMessageEndpoint(t *testing.T) {
+	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+
+	if _, err := bot.SendText(context.Background(), 100, 20, "hello"); err != nil {
+		t.Fatalf("send text: %v", err)
+	}
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, "sendMessage") || !strings.Contains(logOutput, `"text":"hello"`) {
+		t.Fatalf("expected sendMessage payload, got %s", logOutput)
+	}
+}
+
+func TestEditTextUsesEditMessageTextEndpoint(t *testing.T) {
+	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+
+	if err := bot.EditText(context.Background(), 100, 21, "updated"); err != nil {
+		t.Fatalf("edit text: %v", err)
+	}
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, "editMessageText") || !strings.Contains(logOutput, `"text":"updated"`) {
+		t.Fatalf("expected editMessageText payload, got %s", logOutput)
+	}
+}
+
+func TestSendPhotoMessageUsesSendPhotoEndpoint(t *testing.T) {
+	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+
+	if _, err := bot.SendPhotoMessage(context.Background(), 100, 20, "task.png", "", []byte("png")); err != nil {
+		t.Fatalf("send photo message: %v", err)
+	}
+
+	if !strings.Contains(buffer.String(), "sendPhoto") {
+		t.Fatalf("expected sendPhoto request, got %s", buffer.String())
+	}
+}
+
 func TestSendProgressTextIncludesStopButton(t *testing.T) {
 	bot, _, _, _, _, _, _, buffer := newTestBot(t)
 

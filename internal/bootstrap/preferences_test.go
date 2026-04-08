@@ -89,6 +89,21 @@ func TestPreparePreferenceRepositoryUsesSQLiteRepository(t *testing.T) {
 	}
 }
 
+func TestPreparePreferenceRepositoryRejectsBlankAdminTelegramID(t *testing.T) {
+	ctx := context.Background()
+	_, db, err := preparePreferenceRepository(
+		ctx,
+		filepath.Join(t.TempDir(), "state", "grimoire.sqlite"),
+		"   ",
+	)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if db != nil {
+		t.Fatalf("expected nil db on error, got %#v", db)
+	}
+}
+
 func newTestUserRepository(t *testing.T) *sqliterepo.UserRepository {
 	t.Helper()
 

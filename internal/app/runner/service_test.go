@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	domaindraw "grimoire/internal/domain/draw"
 	domaintask "grimoire/internal/domain/task"
 )
 
@@ -229,6 +230,82 @@ func TestUpdateTaskRequiresTxRunner(t *testing.T) {
 	_, err := service.StartTranslating(context.Background(), RunCommand{TaskID: "task-1"})
 	if !errors.Is(err, ErrTxRunnerRequired) {
 		t.Fatalf("expected tx runner required error, got %v", err)
+	}
+}
+
+func TestRequireRunDependencies(t *testing.T) {
+	tests := []struct {
+		name    string
+		service *Service
+		wantErr error
+	}{
+		{
+			name:    "missing repository",
+			service: NewService(nil, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil),
+			wantErr: ErrTaskRepositoryRequired,
+		},
+		{
+			name:    "missing tx runner",
+			service: NewService(&runnerTaskRepositoryStub{}, nil, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil),
+			wantErr: ErrTxRunnerRequired,
+		},
+		{
+			name:    "missing translator",
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, nil, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil),
+			wantErr: ErrTranslatorRequired,
+		},
+		{
+			name:    "missing generator",
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, nil, &imageStoreStub{}, &notifierStub{}, nil),
+			wantErr: ErrGeneratorRequired,
+		},
+		{
+			name:    "missing image store",
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, nil, &notifierStub{}, nil),
+			wantErr: ErrImageStoreRequired,
+		},
+		{
+			name:    "missing notifier",
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, nil, nil),
+			wantErr: ErrNotifierRequired,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !errors.Is(tt.service.requireRunDependencies(), tt.wantErr) {
+				t.Fatalf("expected %v, got %v", tt.wantErr, tt.service.requireRunDependencies())
+			}
+		})
+	}
+}
+
+func TestParseExecutionContext(t *testing.T) {
+	contextSnapshot, err := domaintask.NewContext(`{"shape":" square ","artists":" artist:foo "}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+
+	execContext, err := parseExecutionContext(contextSnapshot)
+	if err != nil {
+		t.Fatalf("parse execution context: %v", err)
+	}
+	if execContext.Shape != domaindraw.ShapeSquare {
+		t.Fatalf("unexpected shape: %s", execContext.Shape)
+	}
+	if execContext.Artists != "artist:foo" {
+		t.Fatalf("unexpected artists: %q", execContext.Artists)
+	}
+}
+
+func TestParseExecutionContextRejectsInvalidShape(t *testing.T) {
+	contextSnapshot, err := domaintask.NewContext(`{"shape":"invalid","artists":"artist:foo"}`)
+	if err != nil {
+		t.Fatalf("new context: %v", err)
+	}
+
+	if _, err := parseExecutionContext(contextSnapshot); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
