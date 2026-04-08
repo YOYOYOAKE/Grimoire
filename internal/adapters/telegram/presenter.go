@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	requestapp "grimoire/internal/app/request"
 	domainnai "grimoire/internal/domain/nai"
 	domainpreferences "grimoire/internal/domain/preferences"
 )
@@ -48,6 +49,32 @@ func imageMenuMarkup() *InlineKeyboardMarkup {
 
 func buildArtistsPromptText() string {
 	return "请发送新的画师串，或发送 /start 取消。"
+}
+
+func buildPendingRequestText(request string) string {
+	request = strings.TrimSpace(request)
+	return fmt.Sprintf("待确认 request\n%s\n\n请确认执行，或继续修改需求。", request)
+}
+
+func buildConfirmedRequestText(request string) string {
+	request = strings.TrimSpace(request)
+	return fmt.Sprintf("已确认 request\n%s\n\n任务已开始执行。", request)
+}
+
+func buildReviseRequestText(request string) string {
+	request = strings.TrimSpace(request)
+	return fmt.Sprintf("已返回继续修改\n%s\n\n请继续补充需求后再生成新的 request。", request)
+}
+
+func requestDecisionMarkup(pending requestapp.PendingRequest) *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "确认执行", CallbackData: pending.ConfirmAction.CallbackData},
+				{Text: "继续修改", CallbackData: pending.ReviseAction.CallbackData},
+			},
+		},
+	}
 }
 
 func buildBalanceText(balance domainnai.AccountBalance) string {

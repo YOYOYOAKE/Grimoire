@@ -21,8 +21,10 @@ import (
 	drawapp "grimoire/internal/app/draw"
 	preferencesapp "grimoire/internal/app/preferences"
 	recoveryapp "grimoire/internal/app/recovery"
+	requestapp "grimoire/internal/app/request"
 	runnerapp "grimoire/internal/app/runner"
 	sessionapp "grimoire/internal/app/session"
+	taskapp "grimoire/internal/app/task"
 	"grimoire/internal/config"
 	platformclock "grimoire/internal/platform/clock"
 	platformid "grimoire/internal/platform/id"
@@ -81,6 +83,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	idGenerator := platformid.NewUUIDGenerator()
 	primaryLLM := cfg.LLMs[0]
 	conversationClient := openai.NewConversationClient(primaryLLM, logger)
+	requestClient := openai.NewRequestClient(primaryLLM, logger)
 	translateClient := openai.NewTranslateFailoverClient(cfg.LLMs, logger)
 	imageGenerator, err := nai.NewClient(cfg, logger)
 	if err != nil {
@@ -120,6 +123,12 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		idGenerator.NewString,
 	)
 	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService)
+	requestService := requestapp.NewService(
+		requestClient,
+		sqliteSessionRepo,
+		sqliteSessionMessageRepo,
+		wiring.ConversationMessageLimit,
+	)
 	imageStore, err := localstore.NewImageStore(wiring.StorageLayout)
 	if err != nil {
 		return nil, fmt.Errorf("init local image store: %w", err)
@@ -141,9 +150,18 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	}, logger)
 	runnerScheduler := memoryqueue.NewScheduler(runnerWorker)
 	recoveryService := recoveryapp.NewService(sqliteTaskRepo, runnerScheduler)
+	taskService := taskapp.NewService(
+		sqliteTaskRepo,
+		sqliteTxRunner,
+		runnerScheduler,
+		systemClock.Now,
+		idGenerator.NewString,
+	)
 
 	telegramBot.SetAccessService(accessService)
 	telegramBot.SetChatService(chatService)
+	telegramBot.SetRequestService(requestService)
+	telegramBot.SetTaskService(taskService)
 	telegramBot.SetPreferenceService(preferenceService)
 	telegramBot.SetBalanceService(imageGenerator)
 

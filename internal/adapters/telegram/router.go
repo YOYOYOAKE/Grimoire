@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,7 +11,10 @@ import (
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	preferencesapp "grimoire/internal/app/preferences"
+	requestapp "grimoire/internal/app/request"
+	taskapp "grimoire/internal/app/task"
 	domainpreferences "grimoire/internal/domain/preferences"
+	domaintask "grimoire/internal/domain/task"
 )
 
 func (b *Bot) routeUpdate(ctx context.Context, update Update) {
@@ -87,6 +91,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	if _, err := b.sendMessage(ctx, message.Chat.ID, result.Reply, nil, message.MessageID); err != nil {
 		b.logWarn("send chat reply failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
 	}
+	b.sendPendingRequest(ctx, telegramUserID(message.From.ID), message.Chat.ID, message.MessageID, result.SessionID)
 }
 
 func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
@@ -96,6 +101,15 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	if query.Message == nil {
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 		return
+	}
+	if b.requestService != nil {
+		decision := b.requestService.ResolveDecision(requestapp.ResolveDecisionCommand{
+			CallbackData: query.Data,
+		})
+		if decision.Kind != requestapp.DecisionKindNone {
+			b.handleRequestDecision(ctx, query, decision)
+			return
+		}
 	}
 
 	action, ok := parseCallbackAction(query.Data)
@@ -153,6 +167,109 @@ func (b *Bot) sendImageMenu(ctx context.Context, userID string, chatID int64, me
 		}
 	}
 	_, _ = b.sendMessage(ctx, chatID, text, imageMenuMarkup(), 0)
+}
+
+func (b *Bot) sendPendingRequest(ctx context.Context, userID string, chatID int64, replyToMessageID int64, sessionID string) {
+	pending, _, err := b.loadPendingRequest(ctx, userID, sessionID)
+	if err != nil {
+		b.logWarn("generate pending request failed", "chat_id", chatID, "session_id", sessionID, "error", err)
+		b.sendSimpleMessage(ctx, chatID, fmt.Sprintf("生成待确认 request 失败: %v", err))
+		return
+	}
+	if _, err := b.sendMessage(
+		ctx,
+		chatID,
+		buildPendingRequestText(pending.Request),
+		requestDecisionMarkup(pending),
+		replyToMessageID,
+	); err != nil {
+		b.logWarn("send pending request failed", "chat_id", chatID, "session_id", sessionID, "error", err)
+	}
+}
+
+func (b *Bot) handleRequestDecision(ctx context.Context, query CallbackQuery, decision requestapp.Decision) {
+	userID := telegramUserID(query.From.ID)
+	pending, preference, err := b.loadPendingRequest(ctx, userID, decision.SessionID)
+	if err != nil {
+		b.logWarn("load pending request for decision failed", "callback_id", query.ID, "session_id", decision.SessionID, "error", err)
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "生成 request 失败", true)
+		return
+	}
+
+	switch decision.Kind {
+	case requestapp.DecisionKindConfirm:
+		if _, err := b.createTaskFromPendingRequest(ctx, userID, decision.SessionID, pending.Request, preference); err != nil {
+			b.logWarn("create task from request failed", "callback_id", query.ID, "session_id", decision.SessionID, "error", err)
+			b.answerCallbackQueryBestEffort(ctx, query.ID, "创建任务失败", true)
+			return
+		}
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "已开始执行", false)
+		_ = b.editMessage(
+			ctx,
+			query.Message.Chat.ID,
+			query.Message.MessageID,
+			buildConfirmedRequestText(pending.Request),
+			nil,
+		)
+	case requestapp.DecisionKindRevise:
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "继续修改", false)
+		_ = b.editMessage(
+			ctx,
+			query.Message.Chat.ID,
+			query.Message.MessageID,
+			buildReviseRequestText(pending.Request),
+			nil,
+		)
+	default:
+		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
+	}
+}
+
+func (b *Bot) loadPendingRequest(
+	ctx context.Context,
+	userID string,
+	sessionID string,
+) (requestapp.PendingRequest, domainpreferences.Preference, error) {
+	if b.preferenceService == nil {
+		return requestapp.PendingRequest{}, domainpreferences.Preference{}, fmt.Errorf("preference service is not initialized")
+	}
+	if b.requestService == nil {
+		return requestapp.PendingRequest{}, domainpreferences.Preference{}, fmt.Errorf("request service is not initialized")
+	}
+	preference, err := b.preferenceService.Get(ctx, preferencesapp.GetCommand{UserID: userID})
+	if err != nil {
+		return requestapp.PendingRequest{}, domainpreferences.Preference{}, err
+	}
+	pending, err := b.requestService.Generate(ctx, requestapp.GenerateCommand{
+		SessionID:  sessionID,
+		Preference: preference,
+	})
+	if err != nil {
+		return requestapp.PendingRequest{}, domainpreferences.Preference{}, err
+	}
+	return pending, preference, nil
+}
+
+func (b *Bot) createTaskFromPendingRequest(
+	ctx context.Context,
+	userID string,
+	sessionID string,
+	request string,
+	preference domainpreferences.Preference,
+) (domaintask.Task, error) {
+	if b.taskService == nil {
+		return domaintask.Task{}, fmt.Errorf("task service is not initialized")
+	}
+	taskContext, err := buildTaskContext(preference)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	return b.taskService.Create(ctx, taskapp.CreateCommand{
+		UserID:    userID,
+		SessionID: sessionID,
+		Request:   request,
+		Context:   taskContext,
+	})
 }
 
 func (b *Bot) sendBalance(ctx context.Context, chatID int64) {
@@ -253,4 +370,20 @@ func firstWord(text string) string {
 
 func telegramUserID(userID int64) string {
 	return strconv.FormatInt(userID, 10)
+}
+
+func buildTaskContext(preference domainpreferences.Preference) (domaintask.Context, error) {
+	payload, err := json.Marshal(struct {
+		Version int    `json:"version"`
+		Shape   string `json:"shape"`
+		Artists string `json:"artists,omitempty"`
+	}{
+		Version: 1,
+		Shape:   string(preference.Shape),
+		Artists: preference.Artists,
+	})
+	if err != nil {
+		return domaintask.Context{}, fmt.Errorf("marshal task context: %w", err)
+	}
+	return domaintask.NewContext(string(payload))
 }
