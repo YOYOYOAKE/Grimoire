@@ -352,6 +352,36 @@ func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
 	}
 }
 
+func TestHandleImgCommandSendsImageMenu(t *testing.T) {
+	bot, _, chatService, _, _, prefService, _, buffer := newTestBot(t)
+	prefService.pref = domainpreferences.DefaultPreference()
+	prefService.pref.Artists = "artist:foo"
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 10,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/img",
+	})
+
+	if len(chatService.commands) != 0 {
+		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
+	}
+	logOutput := buffer.String()
+	for _, expected := range []string{
+		"sendMessage",
+		"全局绘图偏好",
+		"当前尺寸: Small Square (640x640)",
+		"当前画师串: artist:foo",
+		`"callback_data":"request:shape:small-portrait"`,
+		`"callback_data":"request:artists:set"`,
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in output, got %s", expected, logOutput)
+		}
+	}
+}
+
 func TestImgCallbackUpdatesShape(t *testing.T) {
 	bot, _, _, _, _, prefService, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
