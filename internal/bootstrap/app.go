@@ -11,14 +11,12 @@ import (
 	nai "grimoire/internal/adapters/imagegen/nai"
 	openai "grimoire/internal/adapters/llm/openai"
 	memoryqueue "grimoire/internal/adapters/queue/memory"
-	memoryrepo "grimoire/internal/adapters/repository/memory"
 	runtimerepo "grimoire/internal/adapters/repository/runtime"
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	"grimoire/internal/adapters/telegram"
 	accessapp "grimoire/internal/app/access"
 	chatapp "grimoire/internal/app/chat"
 	conversationapp "grimoire/internal/app/conversation"
-	drawapp "grimoire/internal/app/draw"
 	preferencesapp "grimoire/internal/app/preferences"
 	recoveryapp "grimoire/internal/app/recovery"
 	requestapp "grimoire/internal/app/request"
@@ -42,7 +40,6 @@ type recoveryExecutor interface {
 
 type App struct {
 	bot          *telegram.Bot
-	worker       workerStarter
 	runnerWorker workerStarter
 	recovery     recoveryExecutor
 	database     *sql.DB
@@ -60,7 +57,6 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		return nil, fmt.Errorf("at least one llm is required")
 	}
 
-	taskRepo := memoryrepo.NewTaskRepository()
 	runtimePreferenceRepo, err := runtimerepo.NewPreferenceRepository(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("init runtime preference repository: %w", err)
@@ -89,24 +85,6 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 	if err != nil {
 		return nil, fmt.Errorf("init official nai client: %w", err)
 	}
-	drawService := drawapp.NewService(
-		taskRepo,
-		runtimePreferenceRepo,
-		translateClient,
-		imageGenerator,
-		telegramBot,
-		systemClock.Now,
-		idGenerator.NewString,
-		logger,
-	)
-
-	worker := memoryqueue.NewWorker(workerConcurrency, func(ctx context.Context, taskID string) {
-		if err := drawService.Process(ctx, taskID); err != nil {
-			logger.Error("process task failed", "task_id", taskID, "error", err)
-		}
-	}, logger)
-
-	drawService.SetScheduler(worker)
 
 	sqliteSessionRepo := sqliterepo.NewSessionRepository(db, idGenerator)
 	sqliteSessionMessageRepo := sqliterepo.NewSessionMessageRepository(db)
@@ -167,7 +145,6 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 
 	return &App{
 		bot:          telegramBot,
-		worker:       worker,
 		runnerWorker: runnerWorker,
 		recovery:     recoveryService,
 		database:     db,
@@ -206,9 +183,6 @@ func (a *App) Run(ctx context.Context) error {
 }
 
 func (a *App) startBackgroundServices(ctx context.Context) error {
-	if a.worker != nil {
-		a.worker.Start(ctx)
-	}
 	if a.runnerWorker != nil {
 		a.runnerWorker.Start(ctx)
 	}

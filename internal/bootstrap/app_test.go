@@ -36,7 +36,6 @@ func (s *recoveryExecutorStub) Recover(context.Context, recoveryapp.RecoverComma
 func TestStartBackgroundServicesStartsWorkersBeforeRecovery(t *testing.T) {
 	order := []string{}
 	app := &App{
-		worker:       &workerStarterStub{order: &order, name: "legacy-worker"},
 		runnerWorker: &workerStarterStub{order: &order, name: "runner-worker"},
 		recovery:     &recoveryExecutorStub{order: &order},
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -48,7 +47,7 @@ func TestStartBackgroundServicesStartsWorkersBeforeRecovery(t *testing.T) {
 	if err := app.startBackgroundServices(context.Background()); err != nil {
 		t.Fatalf("start background services: %v", err)
 	}
-	if len(order) != 3 || order[0] != "legacy-worker" || order[1] != "runner-worker" || order[2] != "recover" {
+	if len(order) != 2 || order[0] != "runner-worker" || order[1] != "recover" {
 		t.Fatalf("unexpected startup order: %#v", order)
 	}
 }
@@ -56,7 +55,6 @@ func TestStartBackgroundServicesStartsWorkersBeforeRecovery(t *testing.T) {
 func TestStartBackgroundServicesSkipsRecoveryWhenDisabled(t *testing.T) {
 	order := []string{}
 	app := &App{
-		worker:       &workerStarterStub{order: &order, name: "legacy-worker"},
 		runnerWorker: &workerStarterStub{order: &order, name: "runner-worker"},
 		recovery:     &recoveryExecutorStub{order: &order},
 		logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -65,7 +63,7 @@ func TestStartBackgroundServicesSkipsRecoveryWhenDisabled(t *testing.T) {
 	if err := app.startBackgroundServices(context.Background()); err != nil {
 		t.Fatalf("start background services: %v", err)
 	}
-	if len(order) != 2 || order[0] != "legacy-worker" || order[1] != "runner-worker" {
+	if len(order) != 1 || order[0] != "runner-worker" {
 		t.Fatalf("unexpected startup order: %#v", order)
 	}
 }
