@@ -73,6 +73,7 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 	if err != nil {
 		return conversation.ConversationOutput{}, fmt.Errorf("marshal conversation payload: %w", err)
 	}
+	c.logRequest(input, string(userContent))
 
 	body := map[string]any{
 		"model": c.cfg.Model,
@@ -131,6 +132,7 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 		c.logFailure("parse conversation content failed", err, string(respBody), content)
 		return conversation.ConversationOutput{}, err
 	}
+	c.logSuccess(input, string(userContent), string(respBody), responseMode, output)
 	return output, nil
 }
 
@@ -502,4 +504,56 @@ func (c *ConversationClient) logFailure(message string, err error, rawResponse s
 		attrs = append(attrs, "assistant_content", truncate(assistantContent, 2000))
 	}
 	c.logger.Error(message, attrs...)
+}
+
+func (c *ConversationClient) logRequest(input conversation.ConversationInput, userPayload string) {
+	if c.logger == nil {
+		return
+	}
+
+	c.logger.Info(
+		"conversation llm request started",
+		"model", c.cfg.Model,
+		"base_url_host", baseURLHost(c.cfg.BaseURL),
+		"session_id", strings.TrimSpace(input.SessionID),
+		"recent_message_count", len(input.Messages),
+		"summary", input.Summary.Content(),
+		"messages", input.Messages,
+		"user_payload", userPayload,
+	)
+}
+
+func (c *ConversationClient) logSuccess(
+	input conversation.ConversationInput,
+	userPayload string,
+	rawResponse string,
+	responseMode string,
+	output conversation.ConversationOutput,
+) {
+	if c.logger == nil {
+		return
+	}
+
+	attrs := []any{
+		"model", c.cfg.Model,
+		"base_url_host", baseURLHost(c.cfg.BaseURL),
+		"session_id", strings.TrimSpace(input.SessionID),
+		"recent_message_count", len(input.Messages),
+		"summary", input.Summary.Content(),
+		"messages", input.Messages,
+		"user_payload", userPayload,
+		"raw_response", rawResponse,
+		"response_mode", responseMode,
+		"reply", output.Reply,
+		"summary_after", output.Summary.Content(),
+	}
+	if output.CreateDrawingTask != nil {
+		attrs = append(
+			attrs,
+			"tool_name", createDrawingTaskToolName,
+			"request", output.CreateDrawingTask.Request,
+		)
+	}
+
+	c.logger.Info("conversation llm response parsed", attrs...)
 }

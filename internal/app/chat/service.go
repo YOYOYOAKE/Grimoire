@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	conversationapp "grimoire/internal/app/conversation"
@@ -14,6 +15,7 @@ type Service struct {
 	sessions      SessionService
 	conversations ConversationService
 	tasks         TaskService
+	logger        *slog.Logger
 }
 
 func NewService(
@@ -21,12 +23,17 @@ func NewService(
 	sessions SessionService,
 	conversations ConversationService,
 	tasks TaskService,
+	logger *slog.Logger,
 ) *Service {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{
 		users:         users,
 		sessions:      sessions,
 		conversations: conversations,
 		tasks:         tasks,
+		logger:        logger,
 	}
 }
 
@@ -46,16 +53,34 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 	if command.CreatedAt.IsZero() {
 		return HandleTextResult{}, fmt.Errorf("created at is required")
 	}
+	s.logger.Info(
+		"chat handle text started",
+		"user_id", userID,
+		"message_id", messageID,
+		"text", text,
+		"created_at", command.CreatedAt,
+	)
 
 	user, err := s.users.GetByTelegramID(ctx, userID)
 	if err != nil {
 		return HandleTextResult{}, err
 	}
+	s.logger.Info(
+		"chat user loaded",
+		"user_id", userID,
+		"preference_shape", user.Preference.Shape,
+		"preference_artists", user.Preference.Artists,
+	)
 
 	currentSession, err := s.sessions.GetOrCreate(ctx, sessionapp.GetOrCreateCommand{UserID: userID})
 	if err != nil {
 		return HandleTextResult{}, err
 	}
+	s.logger.Info(
+		"chat session ready",
+		"user_id", userID,
+		"session_id", currentSession.ID,
+	)
 
 	if _, err := s.sessions.AppendUserMessage(ctx, sessionapp.AppendMessageCommand{
 		SessionID: currentSession.ID,
@@ -65,6 +90,13 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 	}); err != nil {
 		return HandleTextResult{}, err
 	}
+	s.logger.Info(
+		"chat user message appended",
+		"user_id", userID,
+		"session_id", currentSession.ID,
+		"message_id", messageID,
+		"text", text,
+	)
 
 	result, err := s.conversations.Converse(ctx, conversationapp.ConverseCommand{
 		SessionID:  currentSession.ID,
@@ -73,6 +105,15 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 	if err != nil {
 		return HandleTextResult{}, err
 	}
+	s.logger.Info(
+		"chat conversation completed",
+		"user_id", userID,
+		"session_id", currentSession.ID,
+		"reply", result.Reply,
+		"summary", result.Summary.Content(),
+		"create_drawing_task", result.CreateDrawingTask != nil,
+		"request", createDrawingTaskRequest(result.CreateDrawingTask),
+	)
 
 	if result.CreateDrawingTask != nil {
 		if s.tasks == nil {
@@ -92,14 +133,36 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 		if err != nil {
 			return HandleTextResult{}, err
 		}
+		s.logger.Info(
+			"chat task created",
+			"user_id", userID,
+			"session_id", currentSession.ID,
+			"request", result.CreateDrawingTask.Request,
+			"task_context", taskContext.Raw(),
+			"task_id", task.ID,
+		)
 		return HandleTextResult{
 			SessionID:     currentSession.ID,
 			CreatedTaskID: task.ID,
 		}, nil
 	}
+	s.logger.Info(
+		"chat reply returned without task creation",
+		"user_id", userID,
+		"session_id", currentSession.ID,
+		"reply", result.Reply,
+		"created_task", false,
+	)
 
 	return HandleTextResult{
 		SessionID: currentSession.ID,
 		Reply:     result.Reply,
 	}, nil
+}
+
+func createDrawingTaskRequest(task *conversationapp.CreateDrawingTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.Request
 }

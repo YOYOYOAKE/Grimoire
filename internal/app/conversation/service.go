@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ type Service struct {
 	recentMessageLimit int
 	now                func() time.Time
 	idGenerator        func() string
+	logger             *slog.Logger
 }
 
 func NewService(
@@ -30,6 +32,7 @@ func NewService(
 	recentMessageLimit int,
 	now func() time.Time,
 	idGenerator func() string,
+	logger *slog.Logger,
 ) *Service {
 	if now == nil {
 		now = time.Now
@@ -39,6 +42,9 @@ func NewService(
 			return fmt.Sprintf("assistant-%d", now().UnixNano())
 		}
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Service{
 		model:              model,
 		sessions:           sessions,
@@ -47,6 +53,7 @@ func NewService(
 		recentMessageLimit: recentMessageLimit,
 		now:                now,
 		idGenerator:        idGenerator,
+		logger:             logger,
 	}
 }
 
@@ -74,8 +81,19 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	if err != nil {
 		return ConverseResult{}, err
 	}
+	s.logger.Info(
+		"conversation requested",
+		"session_id", sessionID,
+		"recent_message_limit", s.recentMessageLimit,
+		"recent_message_count", len(recentMessages),
+		"summary", session.Summary.Content(),
+		"messages", recentMessages,
+		"preference_shape", command.Preference.Shape,
+		"preference_artists", command.Preference.Artists,
+	)
 
 	output, err := s.model.Converse(ctx, ConversationInput{
+		SessionID:  sessionID,
 		Summary:    session.Summary,
 		Messages:   recentMessages,
 		Preference: command.Preference,
@@ -100,7 +118,16 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	case reply != "" && createDrawingTask != nil:
 		return ConverseResult{}, fmt.Errorf("conversation reply and create drawing task are mutually exclusive")
 	}
+	s.logger.Info(
+		"conversation model returned",
+		"session_id", sessionID,
+		"reply", reply,
+		"summary", summary.Content(),
+		"create_drawing_task", createDrawingTask != nil,
+		"request", requestText(createDrawingTask),
+	)
 
+	var persistedAssistantMessageID string
 	err = s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
 		latestSession, err := s.sessions.Get(txCtx, sessionID)
 		if err != nil {
@@ -110,8 +137,9 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 		latestSession.UpdateSummary(summary)
 
 		if reply != "" {
+			persistedAssistantMessageID = s.idGenerator()
 			message, err := domainsession.NewMessage(
-				s.idGenerator(),
+				persistedAssistantMessageID,
 				latestSession.ID,
 				domainsession.MessageRoleAssistant,
 				reply,
@@ -135,10 +163,26 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	if err != nil {
 		return ConverseResult{}, err
 	}
+	s.logger.Info(
+		"conversation persisted",
+		"session_id", sessionID,
+		"assistant_reply_persisted", reply != "",
+		"assistant_message_id", persistedAssistantMessageID,
+		"summary", summary.Content(),
+		"create_drawing_task", createDrawingTask != nil,
+		"request", requestText(createDrawingTask),
+	)
 
 	return ConverseResult{
 		Reply:             reply,
 		Summary:           summary,
 		CreateDrawingTask: createDrawingTask,
 	}, nil
+}
+
+func requestText(task *CreateDrawingTask) string {
+	if task == nil {
+		return ""
+	}
+	return task.Request
 }

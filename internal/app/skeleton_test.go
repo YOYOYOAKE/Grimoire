@@ -17,13 +17,13 @@ func TestAppServiceSkeletonsConstruct(t *testing.T) {
 	if accessapp.NewService(nil) == nil {
 		t.Fatal("expected access service")
 	}
-	if chatapp.NewService(nil, nil, nil, nil) == nil {
+	if chatapp.NewService(nil, nil, nil, nil, nil) == nil {
 		t.Fatal("expected chat service")
 	}
 	if sessionapp.NewService(nil, nil, nil) == nil {
 		t.Fatal("expected session service")
 	}
-	if conversationapp.NewService(nil, nil, nil, nil, 15, nil, nil) == nil {
+	if conversationapp.NewService(nil, nil, nil, nil, 15, nil, nil, nil) == nil {
 		t.Fatal("expected conversation service")
 	}
 	if taskapp.NewService(nil, nil, nil, nil, nil) == nil {

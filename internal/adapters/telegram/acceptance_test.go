@@ -300,6 +300,7 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 		15,
 		func() time.Time { return time.Unix(2, 0).UTC() },
 		func() string { return "assistant-msg-1" },
+		nil,
 	)
 	scheduler := &telegramSchedulerStub{}
 	taskIndex := 0
@@ -313,7 +314,7 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 			return fmt.Sprintf("task-%d", taskIndex)
 		},
 	)
-	chatService := chatapp.NewService(userRepo, sessionService, conversationService, taskService)
+	chatService := chatapp.NewService(userRepo, sessionService, conversationService, taskService, nil)
 
 	rootDir := t.TempDir()
 	imageStore, err := localstore.NewImageStore(platformdb.SQLiteLayout{

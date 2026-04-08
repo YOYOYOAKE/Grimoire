@@ -238,6 +238,7 @@ func newSQLiteBackedTestBot(
 			10,
 			func() time.Time { return time.Unix(9, 0).UTC() },
 			func() string { return "assistant-message-1" },
+			nil,
 		)
 		bot.SetChatService(chatapp.NewService(
 			userRepo,
@@ -250,6 +251,7 @@ func newSQLiteBackedTestBot(
 				func() time.Time { return time.Unix(10, 0).UTC() },
 				taskIDGenerator,
 			),
+			nil,
 		))
 	}
 	bot.SetAccessService(accessapp.NewService(userRepo))

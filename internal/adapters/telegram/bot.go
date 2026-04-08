@@ -163,3 +163,9 @@ func (b *Bot) logWarn(message string, attrs ...any) {
 		b.logger.Warn(message, attrs...)
 	}
 }
+
+func (b *Bot) logInfo(message string, attrs ...any) {
+	if b.logger != nil {
+		b.logger.Info(message, attrs...)
+	}
+}

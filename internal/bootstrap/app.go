@@ -91,6 +91,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		wiring.ConversationMessageLimit,
 		systemClock.Now,
 		idGenerator.NewString,
+		logger,
 	)
 	imageStore, err := localstore.NewImageStore(wiring.StorageLayout)
 	if err != nil {
@@ -120,7 +121,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		systemClock.Now,
 		idGenerator.NewString,
 	)
-	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService, taskService)
+	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService, taskService, logger)
 
 	telegramBot.SetAccessService(accessService)
 	telegramBot.SetChatService(chatService)

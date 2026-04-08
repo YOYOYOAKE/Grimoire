@@ -302,6 +302,79 @@ func TestConverseRejectsUnsupportedFormat(t *testing.T) {
 	}
 }
 
+func TestConverseLogsJSONResponse(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	client := newTestConversationClient(t, logger, func(req *http.Request) (*http.Response, error) {
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"reply":"开始绘图吧。","summary":{"goal":"castle","ready":true}}`)), nil
+	})
+
+	if _, err := client.Converse(context.Background(), newConversationInput(t)); err != nil {
+		t.Fatalf("converse: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"conversation llm request started",
+		"session_id=session-1",
+		"user_payload=",
+		"conversation llm response parsed",
+		"response_mode=json",
+		"reply=开始绘图吧。",
+		"raw_response=",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+}
+
+func TestConverseLogsToolResponse(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	client := newTestConversationClient(t, logger, func(req *http.Request) (*http.Response, error) {
+		body := mustJSON(t, map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"tool_calls": []any{
+							map[string]any{
+								"function": map[string]any{
+									"name": createDrawingTaskToolName,
+									"arguments": mustJSON(t, map[string]any{
+										"request": "绘制月下城堡少女",
+										"summary": map[string]any{
+											"goal": "castle",
+										},
+									}),
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		return newHTTPResponse(http.StatusOK, body), nil
+	})
+
+	if _, err := client.Converse(context.Background(), newConversationInput(t)); err != nil {
+		t.Fatalf("converse: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"conversation llm response parsed",
+		"response_mode=tool",
+		"tool_name=create_drawing_task",
+		"request=绘制月下城堡少女",
+		"summary_after=\"{\\\"goal\\\":\\\"castle\\\"}\"",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+}
+
 func newTestConversationClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *ConversationClient {
 	t.Helper()
 
@@ -329,6 +402,7 @@ func newConversationInput(t *testing.T) conversationapp.ConversationInput {
 		t.Fatalf("new message: %v", err)
 	}
 	return conversationapp.ConversationInput{
+		SessionID:  "session-1",
 		Summary:    domainsession.NewSummary(`{"goal":"castle"}`),
 		Messages:   []domainsession.Message{message},
 		Preference: preference,

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -172,13 +173,18 @@ func (m *balanceServiceMock) GetBalance(_ context.Context) (domainnai.AccountBal
 
 func newTestBot(t *testing.T) (*Bot, *accessServiceMock, *chatServiceMock, *taskServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
 	t.Helper()
+	return newTestBotWithLogger(t, nil)
+}
+
+func newTestBotWithLogger(t *testing.T, logger *slog.Logger) (*Bot, *accessServiceMock, *chatServiceMock, *taskServiceMock, *preferenceServiceMock, *balanceServiceMock, *bytes.Buffer) {
+	t.Helper()
 	buffer := &bytes.Buffer{}
 	bot := NewBot(config.Config{
 		Telegram: config.Telegram{
 			BotToken:    "token",
 			AdminUserID: 1,
 		},
-	}, nil)
+	}, logger)
 	bot.httpClient = &http.Client{
 		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			body, _ := io.ReadAll(req.Body)
@@ -251,6 +257,66 @@ func TestHandleMessageUsesChatService(t *testing.T) {
 	}
 	if strings.Contains(buffer.String(), `待确认 request`) {
 		t.Fatalf("did not expect pending request message, got %s", buffer.String())
+	}
+}
+
+func TestHandleMessageLogsInboundAndOutboundLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	bot, _, chatService, _, _, _, _ := newTestBotWithLogger(t, logger)
+	chatService.result = chatapp.HandleTextResult{
+		SessionID: "session-1",
+		Reply:     "开始绘图吧。",
+	}
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 15,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "开始绘图",
+	})
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"telegram inbound message received",
+		"chat_id=100",
+		"telegram_user_id=1",
+		"message_id=15",
+		"text=开始绘图",
+		"telegram outbound chat reply sent",
+		"reply=开始绘图吧。",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+}
+
+func TestHandleMessageLogsNoToolCallScenario(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	bot, _, chatService, _, _, _, _ := newTestBotWithLogger(t, logger)
+	chatService.result = chatapp.HandleTextResult{
+		SessionID: "session-1",
+		Reply:     "已开始绘图，请稍等。",
+	}
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 16,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "开始绘图",
+	})
+
+	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, "telegram outbound chat reply sent") {
+		t.Fatalf("expected outbound reply log, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "created_task_id=\"\"") {
+		t.Fatalf("expected empty created_task_id in logs, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "reply=已开始绘图，请稍等。") {
+		t.Fatalf("expected reply content in logs, got %s", logOutput)
 	}
 }
 

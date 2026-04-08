@@ -28,6 +28,13 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	if message.From == nil {
 		return
 	}
+	b.logInfo(
+		"telegram inbound message received",
+		"chat_id", message.Chat.ID,
+		"telegram_user_id", message.From.ID,
+		"message_id", message.MessageID,
+		"text", message.Text,
+	)
 	if !b.authorizeMessage(ctx, message.Chat.ID, message.From.ID) {
 		return
 	}
@@ -94,10 +101,28 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	}
 	if _, err := b.sendMessage(ctx, message.Chat.ID, reply, nil, message.MessageID); err != nil {
 		b.logWarn("send chat reply failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
+		return
 	}
+	b.logInfo(
+		"telegram outbound chat reply sent",
+		"chat_id", message.Chat.ID,
+		"telegram_user_id", message.From.ID,
+		"message_id", message.MessageID,
+		"reply", reply,
+		"session_id", result.SessionID,
+		"created_task_id", result.CreatedTaskID,
+	)
 }
 
 func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
+	b.logInfo(
+		"telegram callback query received",
+		"callback_id", query.ID,
+		"callback_data", query.Data,
+		"telegram_user_id", query.From.ID,
+		"chat_id", callbackChatID(query),
+		"message_id", callbackMessageID(query),
+	)
 	if !b.authorizeCallback(ctx, query) {
 		return
 	}
@@ -131,6 +156,13 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 		b.setPendingArtists()
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "请发送新的画师串", false)
 		b.sendSimpleMessage(ctx, query.Message.Chat.ID, buildArtistsPromptText())
+		b.logInfo(
+			"telegram artists update requested",
+			"callback_id", query.ID,
+			"callback_data", query.Data,
+			"chat_id", query.Message.Chat.ID,
+			"telegram_user_id", query.From.ID,
+		)
 		return
 	case requestActionClearArtists:
 		pref, err = b.preferenceService.ClearArtists(ctx, preferencesapp.ClearArtistsCommand{
@@ -148,6 +180,15 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 	}
 	b.answerCallbackQueryBestEffort(ctx, query.ID, "已更新", false)
 	_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildImageMenuText("", pref), imageMenuMarkup())
+	b.logInfo(
+		"telegram image preference updated",
+		"callback_id", query.ID,
+		"callback_data", query.Data,
+		"chat_id", query.Message.Chat.ID,
+		"telegram_user_id", query.From.ID,
+		"shape", pref.Shape,
+		"artists", pref.Artists,
+	)
 }
 
 func (b *Bot) sendImageMenu(ctx context.Context, userID string, chatID int64, messageID int64, notice string) {
@@ -165,6 +206,13 @@ func (b *Bot) sendImageMenu(ctx context.Context, userID string, chatID int64, me
 		}
 	}
 	_, _ = b.sendMessage(ctx, chatID, text, imageMenuMarkup(), 0)
+	b.logInfo(
+		"telegram image menu sent",
+		"chat_id", chatID,
+		"user_id", userID,
+		"message_id", messageID,
+		"text", text,
+	)
 }
 
 func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action taskAction) {
@@ -188,6 +236,7 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 		}
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "已停止任务", false)
 		_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildStoppedTaskText(), nil)
+		b.logInfo("telegram task stopped", "callback_id", query.ID, "task_id", action.TaskID, "user_id", userID)
 	case taskActionPrompt:
 		prompt, err := b.taskService.GetPrompt(ctx, taskapp.GetPromptCommand{TaskID: action.TaskID, UserID: userID})
 		if err != nil {
@@ -203,7 +252,9 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "已发送 prompt", false)
 		if _, err := b.sendMessage(ctx, query.Message.Chat.ID, buildPromptText(prompt), nil, query.Message.MessageID); err != nil {
 			b.logWarn("send prompt message failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
+			return
 		}
+		b.logInfo("telegram task prompt sent", "callback_id", query.ID, "task_id", action.TaskID, "user_id", userID, "prompt", prompt)
 	case taskActionRetryTranslate:
 		if _, err := b.taskService.RetryTranslate(ctx, taskapp.RetryCommand{TaskID: action.TaskID, UserID: userID}); err != nil {
 			b.logWarn("retry translate task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
@@ -211,6 +262,7 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 			return
 		}
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "已重新翻译并开始绘图", false)
+		b.logInfo("telegram task retry translate requested", "callback_id", query.ID, "task_id", action.TaskID, "user_id", userID)
 	case taskActionRetryDraw:
 		if _, err := b.taskService.RetryDraw(ctx, taskapp.RetryCommand{TaskID: action.TaskID, UserID: userID}); err != nil {
 			b.logWarn("retry draw task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
@@ -218,6 +270,7 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 			return
 		}
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "已开始重新绘图", false)
+		b.logInfo("telegram task retry draw requested", "callback_id", query.ID, "task_id", action.TaskID, "user_id", userID)
 	default:
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 	}
@@ -238,12 +291,23 @@ func (b *Bot) sendBalance(ctx context.Context, chatID int64) {
 	}
 
 	b.sendSimpleMessage(ctx, chatID, buildBalanceText(balance))
+	b.logInfo(
+		"telegram balance sent",
+		"chat_id", chatID,
+		"purchased_training_steps", balance.PurchasedTrainingSteps,
+		"fixed_training_steps_left", balance.FixedTrainingStepsLeft,
+		"trial_images_left", balance.TrialImagesLeft,
+		"subscription_active", balance.SubscriptionActive,
+		"subscription_tier", balance.SubscriptionTier,
+	)
 }
 
 func (b *Bot) sendSimpleMessage(ctx context.Context, chatID int64, text string) {
 	if _, err := b.sendMessage(ctx, chatID, text, nil, 0); err != nil {
 		b.logWarn("send telegram message failed", "chat_id", chatID, "error", err)
+		return
 	}
+	b.logInfo("telegram simple message sent", "chat_id", chatID, "text", text)
 }
 
 func (b *Bot) answerCallbackQueryBestEffort(ctx context.Context, callbackID string, text string, showAlert bool) {
@@ -321,4 +385,18 @@ func firstWord(text string) string {
 
 func telegramUserID(userID int64) string {
 	return strconv.FormatInt(userID, 10)
+}
+
+func callbackChatID(query CallbackQuery) int64 {
+	if query.Message == nil {
+		return 0
+	}
+	return query.Message.Chat.ID
+}
+
+func callbackMessageID(query CallbackQuery) int64 {
+	if query.Message == nil {
+		return 0
+	}
+	return query.Message.MessageID
 }

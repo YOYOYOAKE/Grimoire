@@ -3,6 +3,8 @@ package conversation
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +112,7 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 		},
 	}
 	now := func() time.Time { return time.Unix(2, 0).UTC() }
-	service := NewService(model, sessions, messages, txRunner, 15, now, func() string { return "assistant-1" })
+	service := NewService(model, sessions, messages, txRunner, 15, now, func() string { return "assistant-1" }, nil)
 
 	preference, err := domainpreferences.New(domaindraw.ShapeSquare, "artist:foo")
 	if err != nil {
@@ -190,6 +192,7 @@ func TestConverseReloadsLatestSessionBeforePersisting(t *testing.T) {
 		10,
 		func() time.Time { return time.Unix(3, 0).UTC() },
 		func() string { return "assistant-1" },
+		nil,
 	)
 
 	_, err := service.Converse(context.Background(), ConverseCommand{
@@ -217,7 +220,7 @@ func TestConversePersistsSummaryWithoutAssistantReplyWhenCreatingTask(t *testing
 			CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
 		},
 	}
-	service := NewService(model, sessions, messages, txRunner, 15, func() time.Time { return time.Unix(2, 0).UTC() }, func() string { return "assistant-1" })
+	service := NewService(model, sessions, messages, txRunner, 15, func() time.Time { return time.Unix(2, 0).UTC() }, func() string { return "assistant-1" }, nil)
 
 	result, err := service.Converse(context.Background(), ConverseCommand{
 		SessionID:  "session-1",
@@ -255,6 +258,7 @@ func TestConverseReturnsModelErrorWithoutOpeningTransaction(t *testing.T) {
 		10,
 		nil,
 		nil,
+		nil,
 	)
 
 	_, err := service.Converse(context.Background(), ConverseCommand{
@@ -285,6 +289,7 @@ func TestConverseRejectsReplyAndCreateDrawingTaskTogether(t *testing.T) {
 		10,
 		nil,
 		nil,
+		nil,
 	)
 
 	if _, err := service.Converse(context.Background(), ConverseCommand{
@@ -296,7 +301,7 @@ func TestConverseRejectsReplyAndCreateDrawingTaskTogether(t *testing.T) {
 }
 
 func TestConverseRequiresTxRunner(t *testing.T) {
-	service := NewService(nil, nil, nil, nil, 10, nil, nil)
+	service := NewService(nil, nil, nil, nil, 10, nil, nil, nil)
 
 	_, err := service.Converse(context.Background(), ConverseCommand{
 		SessionID:  "session-1",
@@ -308,7 +313,7 @@ func TestConverseRequiresTxRunner(t *testing.T) {
 }
 
 func TestConverseRejectsNonPositiveRecentMessageLimit(t *testing.T) {
-	service := NewService(nil, nil, nil, &conversationTxRunnerStub{}, 0, nil, nil)
+	service := NewService(nil, nil, nil, &conversationTxRunnerStub{}, 0, nil, nil, nil)
 
 	_, err := service.Converse(context.Background(), ConverseCommand{
 		SessionID:  "session-1",
@@ -346,6 +351,7 @@ func TestConverseRollsBackAssistantReplyWhenSaveFails(t *testing.T) {
 		15,
 		func() time.Time { return time.Unix(2, 0).UTC() },
 		func() string { return "assistant-msg-1" },
+		nil,
 	)
 
 	_, err := service.Converse(ctx, ConverseCommand{
@@ -390,6 +396,49 @@ func (r *failingConversationSessionRepository) Get(ctx context.Context, sessionI
 
 func (r *failingConversationSessionRepository) Save(context.Context, domainsession.Session) error {
 	return r.saveErr
+}
+
+func TestConverseLogsConversationLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	latestSession := mustSession(t, "session-1", "user-1", 1, domainsession.NewSummary(`{"topic":"moon"}`))
+	recentMessage := mustMessage(t, "msg-1", "session-1", domainsession.MessageRoleUser, "开始绘图", time.Unix(1, 0).UTC())
+	service := NewService(
+		&conversationModelStub{
+			output: ConversationOutput{
+				Summary:           domainsession.NewSummary(`{"topic":"moon","ready":true}`),
+				CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
+			},
+		},
+		&conversationSessionRepositoryStub{getSessions: []domainsession.Session{latestSession, latestSession}},
+		&conversationMessageRepositoryStub{recent: []domainsession.Message{recentMessage}},
+		&conversationTxRunnerStub{},
+		10,
+		func() time.Time { return time.Unix(2, 0).UTC() },
+		func() string { return "assistant-1" },
+		logger,
+	)
+
+	if _, err := service.Converse(context.Background(), ConverseCommand{
+		SessionID:  "session-1",
+		Preference: domainpreferences.DefaultPreference(),
+	}); err != nil {
+		t.Fatalf("converse: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"conversation requested",
+		"session_id=session-1",
+		"conversation model returned",
+		"create_drawing_task=true",
+		"request=\"draw a moonlit girl\"",
+		"conversation persisted",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
 }
 
 func mustSession(t *testing.T, id string, userID string, length int, summary domainsession.Summary) domainsession.Session {

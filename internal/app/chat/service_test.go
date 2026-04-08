@@ -3,6 +3,8 @@ package chat
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,7 +112,7 @@ func TestHandleTextGetsSessionAppendsMessageAndConverse(t *testing.T) {
 	conversations := &chatConversationServiceStub{
 		result: conversationapp.ConverseResult{Reply: "需要补充一下光线方向。"},
 	}
-	service := NewService(users, sessions, conversations, &chatTaskServiceStub{})
+	service := NewService(users, sessions, conversations, &chatTaskServiceStub{}, nil)
 	createdAt := time.Unix(10, 0).UTC()
 
 	result, err := service.HandleText(context.Background(), HandleTextCommand{
@@ -171,6 +173,7 @@ func TestHandleTextReturnsAppendErrorWithoutCallingConversation(t *testing.T) {
 		&chatSessionServiceStub{session: session, appendErr: appendErr},
 		conversations,
 		&chatTaskServiceStub{},
+		nil,
 	)
 
 	_, err := service.HandleText(context.Background(), HandleTextCommand{
@@ -188,7 +191,7 @@ func TestHandleTextReturnsAppendErrorWithoutCallingConversation(t *testing.T) {
 }
 
 func TestHandleTextRejectsInvalidCommand(t *testing.T) {
-	service := NewService(nil, nil, nil, nil)
+	service := NewService(nil, nil, nil, nil, nil)
 
 	tests := []HandleTextCommand{
 		{MessageID: "msg-1", Text: "hello", CreatedAt: time.Unix(1, 0).UTC()},
@@ -225,6 +228,7 @@ func TestHandleTextCreatesTaskWhenConversationRequestsDrawing(t *testing.T) {
 			},
 		},
 		tasks,
+		nil,
 	)
 
 	result, err := service.HandleText(context.Background(), HandleTextCommand{
@@ -270,6 +274,7 @@ func TestHandleTextReturnsTaskCreateError(t *testing.T) {
 			},
 		},
 		&chatTaskServiceStub{err: createErr},
+		nil,
 	)
 
 	_, err := service.HandleText(context.Background(), HandleTextCommand{
@@ -280,6 +285,49 @@ func TestHandleTextReturnsTaskCreateError(t *testing.T) {
 	})
 	if !errors.Is(err, createErr) {
 		t.Fatalf("expected task create error, got %v", err)
+	}
+}
+
+func TestHandleTextLogsLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	user := newChatTestUser(t, "user-1")
+	session := newChatTestSession(t, "session-1", "user-1")
+	service := NewService(
+		&chatUserRepositoryStub{user: user},
+		&chatSessionServiceStub{session: session},
+		&chatConversationServiceStub{
+			result: conversationapp.ConverseResult{
+				Reply:   "需要补充一下光线方向。",
+				Summary: domainsession.NewSummary(`{"topic":"moon"}`),
+			},
+		},
+		&chatTaskServiceStub{},
+		logger,
+	)
+
+	if _, err := service.HandleText(context.Background(), HandleTextCommand{
+		UserID:    "user-1",
+		MessageID: "msg-1",
+		Text:      "开始绘图",
+		CreatedAt: time.Unix(1, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("handle text: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"chat handle text started",
+		"user_id=user-1",
+		"message_id=msg-1",
+		"chat conversation completed",
+		"create_drawing_task=false",
+		"chat reply returned without task creation",
+		"reply=需要补充一下光线方向。",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
 	}
 }
 

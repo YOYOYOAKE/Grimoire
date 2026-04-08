@@ -22,6 +22,7 @@ type TxRunner interface {
 }
 
 type ConversationInput struct {
+	SessionID  string
 	Summary    domainsession.Summary
 	Messages   []domainsession.Message
 	Preference domainpreferences.Preference
