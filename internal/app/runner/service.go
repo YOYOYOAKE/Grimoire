@@ -87,7 +87,7 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 	case domaintask.StatusCompleted, domaintask.StatusFailed:
 		return nil
 	case domaintask.StatusStopped:
-		s.upsertProgressBestEffort(ctx, &task, stoppedText())
+		s.upsertProgressBestEffort(ctx, &task, stoppedText(), false)
 		return nil
 	}
 
@@ -97,12 +97,12 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 	}
 
 	if task.Status == domaintask.StatusQueued {
-		s.upsertProgressBestEffort(ctx, &task, queuedText())
+		s.upsertProgressBestEffort(ctx, &task, queuedText(), true)
 		task, err = s.StartTranslating(ctx, RunCommand{TaskID: task.ID})
 		if err != nil {
 			return err
 		}
-		s.upsertProgressBestEffort(ctx, &task, translatingText())
+		s.upsertProgressBestEffort(ctx, &task, translatingText(), true)
 	}
 
 	var translation *domaindraw.Translation
@@ -120,7 +120,7 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 				return err
 			}
 			if stopRequested {
-				s.upsertProgressBestEffort(ctx, &stopped, stoppedText())
+				s.upsertProgressBestEffort(ctx, &stopped, stoppedText(), false)
 				return nil
 			}
 
@@ -138,11 +138,11 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 				return err
 			}
 		}
-		s.upsertProgressBestEffort(ctx, &task, drawingText())
+		s.upsertProgressBestEffort(ctx, &task, drawingText(), true)
 	}
 
 	if task.Status == domaintask.StatusStopped {
-		s.upsertProgressBestEffort(ctx, &task, stoppedText())
+		s.upsertProgressBestEffort(ctx, &task, stoppedText(), false)
 		return nil
 	}
 	if task.Status != domaintask.StatusDrawing {
@@ -167,7 +167,7 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 		return err
 	}
 	if stopRequested {
-		s.upsertProgressBestEffort(ctx, &stopped, stoppedText())
+		s.upsertProgressBestEffort(ctx, &stopped, stoppedText(), false)
 		return nil
 	}
 
@@ -180,7 +180,7 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 		return err
 	}
 	if stopRequested {
-		s.upsertProgressBestEffort(ctx, &stopped, stoppedText())
+		s.upsertProgressBestEffort(ctx, &stopped, stoppedText(), false)
 		return nil
 	}
 
@@ -318,7 +318,7 @@ func (s *Service) failTask(ctx context.Context, taskID string, code string, stag
 	if err != nil {
 		return err
 	}
-	s.upsertProgressBestEffort(ctx, &task, failedText(taskError.Message))
+	s.upsertProgressBestEffort(ctx, &task, failedText(taskError.Message), false)
 	return nil
 }
 
@@ -332,16 +332,21 @@ func (s *Service) completeResult(ctx context.Context, taskID string, imagePath s
 	})
 }
 
-func (s *Service) upsertProgressBestEffort(ctx context.Context, task *domaintask.Task, text string) {
+func (s *Service) upsertProgressBestEffort(ctx context.Context, task *domaintask.Task, text string, enableStop bool) {
 	if task == nil {
 		return
 	}
+	options := MessageOptions{}
+	if enableStop {
+		options.TaskID = task.ID
+		options.Variant = MessageVariantProgress
+	}
 	if strings.TrimSpace(task.ProgressMessageID) != "" {
-		_ = s.notifier.EditText(ctx, task.UserID, task.ProgressMessageID, text, MessageOptions{})
+		_ = s.notifier.EditText(ctx, task.UserID, task.ProgressMessageID, text, options)
 		return
 	}
 
-	messageID, err := s.notifier.SendText(ctx, task.UserID, text, MessageOptions{})
+	messageID, err := s.notifier.SendText(ctx, task.UserID, text, options)
 	if err != nil {
 		return
 	}

@@ -77,14 +77,17 @@ type notifierStub struct {
 	editTextErr   error
 	deleteErr     error
 	sentTexts     []string
+	sentOptions   []MessageOptions
 	editedTexts   []string
+	editedOptions []MessageOptions
 	deletedIDs    []string
 	sentImagePath string
 	callSendImage int
 }
 
-func (s *notifierStub) SendText(_ context.Context, _ string, text string, _ MessageOptions) (string, error) {
+func (s *notifierStub) SendText(_ context.Context, _ string, text string, options MessageOptions) (string, error) {
 	s.sentTexts = append(s.sentTexts, text)
+	s.sentOptions = append(s.sentOptions, options)
 	if s.sendTextErr != nil {
 		return "", s.sendTextErr
 	}
@@ -94,8 +97,9 @@ func (s *notifierStub) SendText(_ context.Context, _ string, text string, _ Mess
 	return s.sendTextID, nil
 }
 
-func (s *notifierStub) EditText(_ context.Context, _ string, _ string, text string, _ MessageOptions) error {
+func (s *notifierStub) EditText(_ context.Context, _ string, _ string, text string, options MessageOptions) error {
 	s.editedTexts = append(s.editedTexts, text)
+	s.editedOptions = append(s.editedOptions, options)
 	return s.editTextErr
 }
 
@@ -159,8 +163,14 @@ func TestRunSuccessPathPersistsImageAndMessages(t *testing.T) {
 	if len(notifier.sentTexts) != 1 || notifier.sentTexts[0] != "已入队" {
 		t.Fatalf("unexpected sent texts: %#v", notifier.sentTexts)
 	}
+	if len(notifier.sentOptions) != 1 || notifier.sentOptions[0].TaskID != "task-1" || notifier.sentOptions[0].Variant != MessageVariantProgress {
+		t.Fatalf("unexpected sent text options: %#v", notifier.sentOptions)
+	}
 	if len(notifier.editedTexts) != 2 || notifier.editedTexts[0] != "正在翻译提示词" || notifier.editedTexts[1] != "正在绘图" {
 		t.Fatalf("unexpected edited texts: %#v", notifier.editedTexts)
+	}
+	if len(notifier.editedOptions) != 2 || notifier.editedOptions[0].TaskID != "task-1" || notifier.editedOptions[1].TaskID != "task-1" {
+		t.Fatalf("unexpected edited options: %#v", notifier.editedOptions)
 	}
 	if len(notifier.deletedIDs) != 1 || notifier.deletedIDs[0] != "progress-1" {
 		t.Fatalf("unexpected deleted ids: %#v", notifier.deletedIDs)
@@ -281,6 +291,9 @@ func TestRunStopsAfterGenerateWhenTaskIsStoppedConcurrently(t *testing.T) {
 	}
 	if len(notifier.editedTexts) == 0 || notifier.editedTexts[len(notifier.editedTexts)-1] != "已停止任务" {
 		t.Fatalf("unexpected edited texts: %#v", notifier.editedTexts)
+	}
+	if notifier.editedOptions[len(notifier.editedOptions)-1].Variant != MessageVariantNone {
+		t.Fatalf("expected stopped text without progress controls, got %#v", notifier.editedOptions)
 	}
 }
 

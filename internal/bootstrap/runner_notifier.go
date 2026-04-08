@@ -13,7 +13,9 @@ import (
 
 type telegramMessenger interface {
 	SendText(ctx context.Context, chatID int64, replyToMessageID int64, text string) (int64, error)
+	SendProgressText(ctx context.Context, chatID int64, replyToMessageID int64, text string, taskID string) (int64, error)
 	EditText(ctx context.Context, chatID int64, messageID int64, text string) error
+	EditProgressText(ctx context.Context, chatID int64, messageID int64, text string, taskID string) error
 	SendPhotoMessage(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) (int64, error)
 	DeleteMessage(ctx context.Context, chatID int64, messageID int64) error
 }
@@ -40,7 +42,12 @@ func (n *bootstrapRunnerNotifier) SendText(ctx context.Context, userID string, t
 		return "", err
 	}
 
-	messageID, err := n.bot.SendText(ctx, chatID, replyTo, text)
+	var messageID int64
+	if options.Variant == runnerapp.MessageVariantProgress && strings.TrimSpace(options.TaskID) != "" {
+		messageID, err = n.bot.SendProgressText(ctx, chatID, replyTo, text, options.TaskID)
+	} else {
+		messageID, err = n.bot.SendText(ctx, chatID, replyTo, text)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -55,6 +62,9 @@ func (n *bootstrapRunnerNotifier) EditText(ctx context.Context, userID string, m
 	telegramMessageID, err := parseTelegramID("message id", messageID)
 	if err != nil {
 		return err
+	}
+	if options.Variant == runnerapp.MessageVariantProgress && strings.TrimSpace(options.TaskID) != "" {
+		return n.bot.EditProgressText(ctx, chatID, telegramMessageID, text, options.TaskID)
 	}
 	return n.bot.EditText(ctx, chatID, telegramMessageID, text)
 }

@@ -102,8 +102,10 @@ func (m *requestServiceMock) ResolveDecision(command requestapp.ResolveDecisionC
 
 type taskServiceMock struct {
 	commands []taskapp.CreateCommand
+	stops    []taskapp.StopCommand
 	result   domaintask.Task
 	err      error
+	stopErr  error
 }
 
 func (m *taskServiceMock) Create(_ context.Context, command taskapp.CreateCommand) (domaintask.Task, error) {
@@ -113,6 +115,17 @@ func (m *taskServiceMock) Create(_ context.Context, command taskapp.CreateComman
 	}
 	if strings.TrimSpace(m.result.ID) == "" {
 		m.result = domaintask.Task{ID: "task-1"}
+	}
+	return m.result, nil
+}
+
+func (m *taskServiceMock) Stop(_ context.Context, command taskapp.StopCommand) (domaintask.Task, error) {
+	m.stops = append(m.stops, command)
+	if m.stopErr != nil {
+		return domaintask.Task{}, m.stopErr
+	}
+	if strings.TrimSpace(m.result.ID) == "" {
+		m.result = domaintask.Task{ID: command.TaskID, Status: domaintask.StatusStopped}
 	}
 	return m.result, nil
 }
@@ -391,6 +404,32 @@ func TestSendPhotoIncludesReplyToMessage(t *testing.T) {
 	}
 }
 
+func TestSendProgressTextIncludesStopButton(t *testing.T) {
+	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+
+	if _, err := bot.SendProgressText(context.Background(), 100, 20, "已入队", "task-1"); err != nil {
+		t.Fatalf("send progress text: %v", err)
+	}
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, `"callback_data":"task:stop:task-1"`) {
+		t.Fatalf("expected stop callback in output, got %s", logOutput)
+	}
+}
+
+func TestEditProgressTextIncludesStopButton(t *testing.T) {
+	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+
+	if err := bot.EditProgressText(context.Background(), 100, 20, "正在绘图", "task-1"); err != nil {
+		t.Fatalf("edit progress text: %v", err)
+	}
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, `"callback_data":"task:stop:task-1"`) {
+		t.Fatalf("expected stop callback in edit output, got %s", logOutput)
+	}
+}
+
 func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
 	bot, _, _, _, _, _, _, buffer := newTestBot(t)
 
@@ -568,5 +607,48 @@ func TestRequestReviseCallbackDoesNotCreateTask(t *testing.T) {
 	}
 	if !strings.Contains(buffer.String(), `已返回继续修改`) {
 		t.Fatalf("expected revise edit text, got %s", buffer.String())
+	}
+}
+
+func TestHandleStopTaskCallbackStopsTaskAndEditsProgressMessage(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-stop",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 32,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:stop:task-1",
+	})
+
+	if len(taskService.stops) != 1 || taskService.stops[0].TaskID != "task-1" {
+		t.Fatalf("unexpected stop commands: %#v", taskService.stops)
+	}
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, `"text":"已停止任务"`) {
+		t.Fatalf("expected stopped task text, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "editMessageText") {
+		t.Fatalf("expected edit message request, got %s", logOutput)
+	}
+}
+
+func TestHandleStopTaskCallbackReportsFailure(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	taskService.stopErr = errors.New("boom")
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-stop-fail",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 33,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:stop:task-1",
+	})
+
+	if !strings.Contains(buffer.String(), `"text":"停止任务失败"`) {
+		t.Fatalf("expected stop failure callback response, got %s", buffer.String())
 	}
 }

@@ -70,3 +70,19 @@ func TestBuildPendingRequestTextAndMarkup(t *testing.T) {
 		t.Fatalf("unexpected revise callback: %#v", markup.InlineKeyboard[0][1])
 	}
 }
+
+func TestTaskProgressMarkup(t *testing.T) {
+	markup := taskProgressMarkup("task-1")
+	if markup == nil {
+		t.Fatal("expected progress markup")
+	}
+	if len(markup.InlineKeyboard) != 1 || len(markup.InlineKeyboard[0]) != 1 {
+		t.Fatalf("unexpected progress markup: %#v", markup)
+	}
+	if markup.InlineKeyboard[0][0].Text != "停止任务" {
+		t.Fatalf("unexpected progress button: %#v", markup.InlineKeyboard[0][0])
+	}
+	if markup.InlineKeyboard[0][0].CallbackData != "task:stop:task-1" {
+		t.Fatalf("unexpected progress callback: %#v", markup.InlineKeyboard[0][0])
+	}
+}

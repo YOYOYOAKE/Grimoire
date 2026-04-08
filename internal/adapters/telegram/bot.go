@@ -36,6 +36,7 @@ type RequestService interface {
 
 type TaskService interface {
 	Create(ctx context.Context, command taskapp.CreateCommand) (domaintask.Task, error)
+	Stop(ctx context.Context, command taskapp.StopCommand) (domaintask.Task, error)
 }
 
 type PreferenceService interface {
@@ -136,8 +137,16 @@ func (b *Bot) SendText(ctx context.Context, chatID int64, replyToMessageID int64
 	return b.sendMessage(ctx, chatID, text, nil, replyToMessageID)
 }
 
+func (b *Bot) SendProgressText(ctx context.Context, chatID int64, replyToMessageID int64, text string, taskID string) (int64, error) {
+	return b.sendMessage(ctx, chatID, text, taskProgressMarkup(taskID), replyToMessageID)
+}
+
 func (b *Bot) EditText(ctx context.Context, chatID int64, messageID int64, text string) error {
 	return b.editMessage(ctx, chatID, messageID, text, nil)
+}
+
+func (b *Bot) EditProgressText(ctx context.Context, chatID int64, messageID int64, text string, taskID string) error {
+	return b.editMessage(ctx, chatID, messageID, text, taskProgressMarkup(taskID))
 }
 
 func (b *Bot) SendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error {

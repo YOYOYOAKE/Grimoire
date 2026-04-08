@@ -77,6 +77,24 @@ func requestDecisionMarkup(pending requestapp.PendingRequest) *InlineKeyboardMar
 	}
 }
 
+func taskProgressMarkup(taskID string) *InlineKeyboardMarkup {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "停止任务", CallbackData: taskStopPrefix + taskID},
+			},
+		},
+	}
+}
+
+func buildStoppedTaskText() string {
+	return "已停止任务"
+}
+
 func buildBalanceText(balance domainnai.AccountBalance) string {
 	subscriptionStatus := "未激活"
 	if balance.SubscriptionActive {

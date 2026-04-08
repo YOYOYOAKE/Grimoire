@@ -111,6 +111,10 @@ func (b *Bot) handleCallbackQuery(ctx context.Context, query CallbackQuery) {
 			return
 		}
 	}
+	if action, ok := parseTaskAction(query.Data); ok {
+		b.handleTaskAction(ctx, query, action)
+		return
+	}
 
 	action, ok := parseCallbackAction(query.Data)
 	if !ok {
@@ -184,6 +188,31 @@ func (b *Bot) sendPendingRequest(ctx context.Context, userID string, chatID int6
 		replyToMessageID,
 	); err != nil {
 		b.logWarn("send pending request failed", "chat_id", chatID, "session_id", sessionID, "error", err)
+	}
+}
+
+func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action taskAction) {
+	if query.Message == nil {
+		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
+		return
+	}
+	if b.taskService == nil {
+		b.logWarn("task service is not initialized", "callback_id", query.ID, "task_id", action.TaskID)
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "任务服务未初始化", true)
+		return
+	}
+
+	switch action.Kind {
+	case taskActionStop:
+		if _, err := b.taskService.Stop(ctx, taskapp.StopCommand{TaskID: action.TaskID}); err != nil {
+			b.logWarn("stop task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
+			b.answerCallbackQueryBestEffort(ctx, query.ID, "停止任务失败", true)
+			return
+		}
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "已停止任务", false)
+		_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildStoppedTaskText(), nil)
+	default:
+		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 	}
 }
 

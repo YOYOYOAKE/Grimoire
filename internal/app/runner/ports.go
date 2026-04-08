@@ -30,7 +30,16 @@ type ImageStore interface {
 
 type MessageOptions struct {
 	ReplyToMessageID string
+	TaskID           string
+	Variant          MessageVariant
 }
+
+type MessageVariant string
+
+const (
+	MessageVariantNone     MessageVariant = ""
+	MessageVariantProgress MessageVariant = "progress"
+)
 
 type Notifier interface {
 	SendText(ctx context.Context, userID string, text string, options MessageOptions) (string, error)

@@ -20,6 +20,8 @@ const (
 	cbClearArtists        = "img:artists:clear"
 )
 
+const taskStopPrefix = "task:stop:"
+
 type callbackActionKind string
 
 const (
@@ -31,6 +33,17 @@ const (
 type callbackAction struct {
 	Kind  callbackActionKind
 	Shape domaindraw.Shape
+}
+
+type taskActionKind string
+
+const (
+	taskActionStop taskActionKind = "stop"
+)
+
+type taskAction struct {
+	Kind   taskActionKind
+	TaskID string
 }
 
 func parseCallbackAction(data string) (callbackAction, bool) {
@@ -59,5 +72,19 @@ func parseCallbackAction(data string) (callbackAction, bool) {
 		return callbackAction{Kind: callbackActionClearArtists}, true
 	default:
 		return callbackAction{}, false
+	}
+}
+
+func parseTaskAction(data string) (taskAction, bool) {
+	data = strings.TrimSpace(data)
+	switch {
+	case strings.HasPrefix(data, taskStopPrefix):
+		taskID := strings.TrimSpace(strings.TrimPrefix(data, taskStopPrefix))
+		if taskID == "" {
+			return taskAction{}, false
+		}
+		return taskAction{Kind: taskActionStop, TaskID: taskID}, true
+	default:
+		return taskAction{}, false
 	}
 }

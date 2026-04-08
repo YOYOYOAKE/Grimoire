@@ -51,3 +51,37 @@ func TestParseCallbackAction(t *testing.T) {
 		})
 	}
 }
+
+func TestParseTaskAction(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   taskAction
+		wantOK bool
+	}{
+		{
+			name:   "stop task",
+			input:  "task:stop:task-1",
+			want:   taskAction{Kind: taskActionStop, TaskID: "task-1"},
+			wantOK: true,
+		},
+		{
+			name:   "invalid blank task id",
+			input:  "task:stop:   ",
+			want:   taskAction{},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseTaskAction(tt.input)
+			if ok != tt.wantOK {
+				t.Fatalf("unexpected ok=%v", ok)
+			}
+			if got != tt.want {
+				t.Fatalf("unexpected action: %#v", got)
+			}
+		})
+	}
+}

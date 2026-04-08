@@ -14,6 +14,7 @@ type telegramMessengerStub struct {
 	sendTextReplyTo   int64
 	sendTextText      string
 	sendTextMessageID int64
+	sendTextTaskID    string
 
 	sendPhotoChatID    int64
 	sendPhotoReplyTo   int64
@@ -25,6 +26,7 @@ type telegramMessengerStub struct {
 	editChatID    int64
 	editMessageID int64
 	editText      string
+	editTaskID    string
 
 	deleteChatID    int64
 	deleteMessageID int64
@@ -40,10 +42,29 @@ func (s *telegramMessengerStub) SendText(_ context.Context, chatID int64, replyT
 	return s.sendTextMessageID, nil
 }
 
+func (s *telegramMessengerStub) SendProgressText(_ context.Context, chatID int64, replyToMessageID int64, text string, taskID string) (int64, error) {
+	s.sendTextChatID = chatID
+	s.sendTextReplyTo = replyToMessageID
+	s.sendTextText = text
+	s.sendTextTaskID = taskID
+	if s.sendTextMessageID == 0 {
+		return 42, nil
+	}
+	return s.sendTextMessageID, nil
+}
+
 func (s *telegramMessengerStub) EditText(_ context.Context, chatID int64, messageID int64, text string) error {
 	s.editChatID = chatID
 	s.editMessageID = messageID
 	s.editText = text
+	return nil
+}
+
+func (s *telegramMessengerStub) EditProgressText(_ context.Context, chatID int64, messageID int64, text string, taskID string) error {
+	s.editChatID = chatID
+	s.editMessageID = messageID
+	s.editText = text
+	s.editTaskID = taskID
 	return nil
 }
 
@@ -78,6 +99,37 @@ func TestBootstrapRunnerNotifierSendTextConvertsIDs(t *testing.T) {
 	}
 	if messenger.sendTextChatID != 123 || messenger.sendTextReplyTo != 7 || messenger.sendTextText != "hello" {
 		t.Fatalf("unexpected send text call: %#v", messenger)
+	}
+}
+
+func TestBootstrapRunnerNotifierSendProgressTextUsesTaskControls(t *testing.T) {
+	messenger := &telegramMessengerStub{}
+	notifier := newBootstrapRunnerNotifier(messenger, "/tmp/grimoire")
+
+	_, err := notifier.SendText(context.Background(), "123", "正在绘图", runnerapp.MessageOptions{
+		TaskID:  "task-1",
+		Variant: runnerapp.MessageVariantProgress,
+	})
+	if err != nil {
+		t.Fatalf("send progress text: %v", err)
+	}
+	if messenger.sendTextTaskID != "task-1" {
+		t.Fatalf("unexpected task id: %q", messenger.sendTextTaskID)
+	}
+}
+
+func TestBootstrapRunnerNotifierEditProgressTextUsesTaskControls(t *testing.T) {
+	messenger := &telegramMessengerStub{}
+	notifier := newBootstrapRunnerNotifier(messenger, "/tmp/grimoire")
+
+	if err := notifier.EditText(context.Background(), "123", "9", "已入队", runnerapp.MessageOptions{
+		TaskID:  "task-1",
+		Variant: runnerapp.MessageVariantProgress,
+	}); err != nil {
+		t.Fatalf("edit progress text: %v", err)
+	}
+	if messenger.editChatID != 123 || messenger.editMessageID != 9 || messenger.editTaskID != "task-1" {
+		t.Fatalf("unexpected edit progress call: %#v", messenger)
 	}
 }
 
