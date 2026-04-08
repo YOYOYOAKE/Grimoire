@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -18,8 +17,8 @@ import (
 	domainpreferences "grimoire/internal/domain/preferences"
 	domainsession "grimoire/internal/domain/session"
 	domaintask "grimoire/internal/domain/task"
-	domainuser "grimoire/internal/domain/user"
 	platformid "grimoire/internal/platform/id"
+	sqlitefixture "grimoire/internal/testsupport/sqlitefixture"
 )
 
 type telegramRequestGeneratorStub struct {
@@ -43,14 +42,13 @@ func (s *telegramSchedulerStub) Enqueue(taskID string) error {
 
 func TestRequestConfirmCallbackWithSQLiteServicesCreatesTask(t *testing.T) {
 	ctx := context.Background()
-	db := openTelegramIntegrationDB(t)
+	db := sqlitefixture.OpenDB(t)
 	preference, err := domainpreferences.New(domaindraw.ShapePortrait, "artist:foo")
 	if err != nil {
 		t.Fatalf("new preference: %v", err)
 	}
-	seedTelegramUser(t, db, "1", preference)
-	seedTelegramSession(t, db, "1", "session-1")
-	appendTelegramSessionMessage(t, db, "session-1", "message-1", "画一个月下的少女", time.Unix(1, 0).UTC())
+	sqlitefixture.CreateUserAndSession(t, db, "1", "session-1", preference)
+	sqlitefixture.AppendMessage(t, db, "session-1", "message-1", domainsession.MessageRoleUser, "画一个月下的少女", time.Unix(1, 0).UTC())
 
 	bot, taskRepo, scheduler, generator, buffer := newSQLiteBackedTestBot(t, db, []string{"task-confirm"})
 	generator.output = "draw a moonlit girl"
@@ -97,9 +95,8 @@ func TestRequestConfirmCallbackWithSQLiteServicesCreatesTask(t *testing.T) {
 
 func TestHandleStopTaskCallbackWithSQLiteTaskServicePersistsStoppedTask(t *testing.T) {
 	ctx := context.Background()
-	db := openTelegramIntegrationDB(t)
-	seedTelegramUser(t, db, "1", domainpreferences.DefaultPreference())
-	seedTelegramSession(t, db, "1", "session-1")
+	db := sqlitefixture.OpenDB(t)
+	sqlitefixture.CreateUserAndSession(t, db, "1", "session-1", domainpreferences.DefaultPreference())
 
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	source := mustTelegramTaskAtStatus(t, "task-stop", domaintask.StatusDrawing, time.Unix(1, 0).UTC())
@@ -138,9 +135,8 @@ func TestHandleStopTaskCallbackWithSQLiteTaskServicePersistsStoppedTask(t *testi
 
 func TestHandleRetryCallbacksWithSQLiteTaskServiceCreateDerivedTasks(t *testing.T) {
 	ctx := context.Background()
-	db := openTelegramIntegrationDB(t)
-	seedTelegramUser(t, db, "1", domainpreferences.DefaultPreference())
-	seedTelegramSession(t, db, "1", "session-1")
+	db := sqlitefixture.OpenDB(t)
+	sqlitefixture.CreateUserAndSession(t, db, "1", "session-1", domainpreferences.DefaultPreference())
 
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	source := mustTelegramTaskAtStatus(t, "task-source", domaintask.StatusCompleted, time.Unix(1, 0).UTC())
@@ -241,81 +237,6 @@ func newSQLiteBackedTestBot(
 	))
 
 	return bot, taskRepo, scheduler, generator, buffer
-}
-
-func openTelegramIntegrationDB(t *testing.T) *sql.DB {
-	t.Helper()
-
-	db, err := sqliterepo.Open(context.Background(), filepath.Join(t.TempDir(), "grimoire.sqlite"))
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-	if err := sqliterepo.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migrate sqlite: %v", err)
-	}
-	return db
-}
-
-func seedTelegramUser(t *testing.T, db *sql.DB, telegramID string, preference domainpreferences.Preference) {
-	t.Helper()
-
-	userRepo := sqliterepo.NewUserRepository(db)
-	user, err := domainuser.New(telegramID, domainuser.RoleNormal, preference)
-	if err != nil {
-		t.Fatalf("new user: %v", err)
-	}
-	if err := userRepo.Create(context.Background(), user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-}
-
-func seedTelegramSession(t *testing.T, db *sql.DB, userID string, sessionID string) domainsession.Session {
-	t.Helper()
-
-	sessionRepo := sqliterepo.NewSessionRepository(db, platformid.NewStaticGenerator(sessionID))
-	session, err := sessionRepo.GetOrCreateActiveByUserID(context.Background(), userID)
-	if err != nil {
-		t.Fatalf("get or create session: %v", err)
-	}
-	if session.ID != sessionID {
-		t.Fatalf("unexpected session id: %q", session.ID)
-	}
-	return session
-}
-
-func appendTelegramSessionMessage(
-	t *testing.T,
-	db *sql.DB,
-	sessionID string,
-	messageID string,
-	content string,
-	createdAt time.Time,
-) {
-	t.Helper()
-
-	sessionRepo := sqliterepo.NewSessionRepository(db, platformid.NewStaticGenerator("unused-session"))
-	messageRepo := sqliterepo.NewSessionMessageRepository(db)
-	session, err := sessionRepo.Get(context.Background(), sessionID)
-	if err != nil {
-		t.Fatalf("get session: %v", err)
-	}
-
-	message, err := domainsession.NewMessage(messageID, sessionID, domainsession.MessageRoleUser, content, createdAt)
-	if err != nil {
-		t.Fatalf("new session message: %v", err)
-	}
-	if err := messageRepo.Append(context.Background(), message); err != nil {
-		t.Fatalf("append session message: %v", err)
-	}
-	if err := session.RecordMessage(message); err != nil {
-		t.Fatalf("record session message: %v", err)
-	}
-	if err := sessionRepo.Save(context.Background(), session); err != nil {
-		t.Fatalf("save session: %v", err)
-	}
 }
 
 func mustTelegramTaskAtStatus(t *testing.T, id string, status domaintask.Status, createdAt time.Time) domaintask.Task {

@@ -2,9 +2,7 @@ package conversation
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,8 +10,8 @@ import (
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domainsession "grimoire/internal/domain/session"
-	domainuser "grimoire/internal/domain/user"
 	platformid "grimoire/internal/platform/id"
+	sqlitefixture "grimoire/internal/testsupport/sqlitefixture"
 )
 
 type conversationSessionRepositoryStub struct {
@@ -255,31 +253,13 @@ func TestConverseRejectsNonPositiveRecentMessageLimit(t *testing.T) {
 
 func TestConverseRollsBackAssistantReplyWhenSaveFails(t *testing.T) {
 	ctx := context.Background()
-	db := openConversationTestDB(t)
-	userRepo := sqliterepo.NewUserRepository(db)
+	db := sqlitefixture.OpenDB(t)
 	sessionRepo := sqliterepo.NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
 	messageRepo := sqliterepo.NewSessionMessageRepository(db)
 	txRunner := sqliterepo.NewTxRunner(db)
 
-	user := newConversationTestUser(t, "user-1")
-	if err := userRepo.Create(ctx, user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-
-	session, err := sessionRepo.GetOrCreateActiveByUserID(ctx, "user-1")
-	if err != nil {
-		t.Fatalf("get or create session: %v", err)
-	}
-	userMessage := mustMessage(t, "user-msg-1", session.ID, domainsession.MessageRoleUser, "hello", time.Unix(1, 0).UTC())
-	if err := messageRepo.Append(ctx, userMessage); err != nil {
-		t.Fatalf("append user message: %v", err)
-	}
-	if err := session.RecordMessage(userMessage); err != nil {
-		t.Fatalf("record user message: %v", err)
-	}
-	if err := sessionRepo.Save(ctx, session); err != nil {
-		t.Fatalf("save session: %v", err)
-	}
+	session := sqlitefixture.CreateUserAndSession(t, db, "user-1", "session-1", domainpreferences.DefaultPreference())
+	sqlitefixture.AppendMessage(t, db, session.ID, "user-msg-1", domainsession.MessageRoleUser, "hello", time.Unix(1, 0).UTC())
 
 	saveErr := errors.New("save failed")
 	service := NewService(
@@ -300,7 +280,7 @@ func TestConverseRollsBackAssistantReplyWhenSaveFails(t *testing.T) {
 		func() string { return "assistant-msg-1" },
 	)
 
-	_, err = service.Converse(ctx, ConverseCommand{
+	_, err := service.Converse(ctx, ConverseCommand{
 		SessionID:  session.ID,
 		Preference: domainpreferences.DefaultPreference(),
 	})
@@ -344,22 +324,6 @@ func (r *failingConversationSessionRepository) Save(context.Context, domainsessi
 	return r.saveErr
 }
 
-func openConversationTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-
-	db, err := sqliterepo.Open(context.Background(), filepath.Join(t.TempDir(), "grimoire.sqlite"))
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-	if err := sqliterepo.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migrate sqlite: %v", err)
-	}
-	return db
-}
-
 func mustSession(t *testing.T, id string, userID string, length int, summary domainsession.Summary) domainsession.Session {
 	t.Helper()
 	session, err := domainsession.Restore(id, userID, length, summary)
@@ -376,13 +340,4 @@ func mustMessage(t *testing.T, id string, sessionID string, role domainsession.M
 		t.Fatalf("new message: %v", err)
 	}
 	return message
-}
-
-func newConversationTestUser(t *testing.T, telegramID string) domainuser.User {
-	t.Helper()
-	user, err := domainuser.New(telegramID, domainuser.RoleNormal, domainpreferences.DefaultPreference())
-	if err != nil {
-		t.Fatalf("new user: %v", err)
-	}
-	return user
 }

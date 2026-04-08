@@ -2,18 +2,15 @@ package task
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domaintask "grimoire/internal/domain/task"
-	domainuser "grimoire/internal/domain/user"
-	platformid "grimoire/internal/platform/id"
+	sqlitefixture "grimoire/internal/testsupport/sqlitefixture"
 )
 
 type taskRepositoryStub struct {
@@ -148,10 +145,10 @@ func TestCreatePersistsQueuedTaskAndEnqueuesAfterCommit(t *testing.T) {
 }
 
 func TestCreateReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
-	db := openTaskTestDB(t)
+	db := sqlitefixture.OpenDB(t)
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	txRunner := sqliterepo.NewTxRunner(db)
-	createTaskSessionFixture(t, db, "user-1", "session-1")
+	sqlitefixture.CreateUserAndSession(t, db, "user-1", "session-1", domainpreferences.DefaultPreference())
 
 	contextSnapshot := mustTaskContext(t, `{"summary":{"topic":"moon"}}`)
 	schedulerErr := errors.New("queue unavailable")
@@ -399,10 +396,10 @@ func TestRetryDrawCreatesChildTaskAndReusesPrompt(t *testing.T) {
 }
 
 func TestRetryDrawReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
-	db := openTaskTestDB(t)
+	db := sqlitefixture.OpenDB(t)
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	txRunner := sqliterepo.NewTxRunner(db)
-	createTaskSessionFixture(t, db, "user-1", "session-1")
+	sqlitefixture.CreateUserAndSession(t, db, "user-1", "session-1", domainpreferences.DefaultPreference())
 
 	source := mustTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC())
 	if err := source.SetPrompt("masterpiece, moonlit_girl"); err != nil {
@@ -544,44 +541,6 @@ func TestGetPromptRejectsTaskOwnedByAnotherUser(t *testing.T) {
 	_, err := service.GetPrompt(context.Background(), GetPromptCommand{TaskID: "task-1", UserID: "user-1"})
 	if !errors.Is(err, ErrTaskAccessDenied) {
 		t.Fatalf("expected task access denied error, got %v", err)
-	}
-}
-
-func openTaskTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-
-	db, err := sqliterepo.Open(context.Background(), filepath.Join(t.TempDir(), "grimoire.sqlite"))
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-	if err := sqliterepo.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migrate sqlite: %v", err)
-	}
-	return db
-}
-
-func createTaskSessionFixture(t *testing.T, db *sql.DB, userID string, sessionID string) {
-	t.Helper()
-
-	userRepo := sqliterepo.NewUserRepository(db)
-	user, err := domainuser.New(userID, domainuser.RoleNormal, domainpreferences.DefaultPreference())
-	if err != nil {
-		t.Fatalf("new user: %v", err)
-	}
-	if err := userRepo.Create(context.Background(), user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-
-	sessionRepo := sqliterepo.NewSessionRepository(db, platformid.NewStaticGenerator(sessionID))
-	session, err := sessionRepo.GetOrCreateActiveByUserID(context.Background(), userID)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	if session.ID != sessionID {
-		t.Fatalf("unexpected session id: %q", session.ID)
 	}
 }
 

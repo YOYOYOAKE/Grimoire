@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,18 +12,17 @@ import (
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domaintask "grimoire/internal/domain/task"
-	domainuser "grimoire/internal/domain/user"
 	platformdb "grimoire/internal/platform/db"
-	platformid "grimoire/internal/platform/id"
+	sqlitefixture "grimoire/internal/testsupport/sqlitefixture"
 )
 
 func TestRunWithSQLiteRepositoryPersistsCompletedTaskAndImage(t *testing.T) {
 	ctx := context.Background()
 	rootDir := t.TempDir()
-	db := openRunnerIntegrationDB(t)
+	db := sqlitefixture.OpenDB(t)
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	txRunner := sqliterepo.NewTxRunner(db)
-	createRunnerSessionFixture(t, db, "user-1", "session-1")
+	sqlitefixture.CreateUserAndSession(t, db, "user-1", "session-1", domainpreferences.DefaultPreference())
 
 	task := mustRunnerTaskWithContext(t, "task-1", "user-1", "session-1", `{"version":1,"shape":"square","artists":"artist:foo"}`)
 	if err := taskRepo.Create(ctx, task); err != nil {
@@ -76,10 +74,10 @@ func TestRunWithSQLiteRepositoryPersistsCompletedTaskAndImage(t *testing.T) {
 
 func TestRunWithSQLiteRepositoryPersistsFailureState(t *testing.T) {
 	ctx := context.Background()
-	db := openRunnerIntegrationDB(t)
+	db := sqlitefixture.OpenDB(t)
 	taskRepo := sqliterepo.NewTaskRepository(db)
 	txRunner := sqliterepo.NewTxRunner(db)
-	createRunnerSessionFixture(t, db, "user-1", "session-1")
+	sqlitefixture.CreateUserAndSession(t, db, "user-1", "session-1", domainpreferences.DefaultPreference())
 
 	task := mustRunnerTaskWithContext(t, "task-1", "user-1", "session-1", `{"version":1,"shape":"square"}`)
 	if err := taskRepo.Create(ctx, task); err != nil {
@@ -109,44 +107,6 @@ func TestRunWithSQLiteRepositoryPersistsFailureState(t *testing.T) {
 	}
 	if stored.Error == nil || stored.Error.Code != "PROMPT_TRANSLATE_FAILED" {
 		t.Fatalf("unexpected task error: %#v", stored.Error)
-	}
-}
-
-func openRunnerIntegrationDB(t *testing.T) *sql.DB {
-	t.Helper()
-
-	db, err := sqliterepo.Open(context.Background(), filepath.Join(t.TempDir(), "grimoire.sqlite"))
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = db.Close()
-	})
-	if err := sqliterepo.Migrate(context.Background(), db); err != nil {
-		t.Fatalf("migrate sqlite: %v", err)
-	}
-	return db
-}
-
-func createRunnerSessionFixture(t *testing.T, db *sql.DB, userID string, sessionID string) {
-	t.Helper()
-
-	userRepo := sqliterepo.NewUserRepository(db)
-	user, err := domainuser.New(userID, domainuser.RoleNormal, domainpreferences.DefaultPreference())
-	if err != nil {
-		t.Fatalf("new user: %v", err)
-	}
-	if err := userRepo.Create(context.Background(), user); err != nil {
-		t.Fatalf("create user: %v", err)
-	}
-
-	sessionRepo := sqliterepo.NewSessionRepository(db, platformid.NewStaticGenerator(sessionID))
-	session, err := sessionRepo.GetOrCreateActiveByUserID(context.Background(), userID)
-	if err != nil {
-		t.Fatalf("create session: %v", err)
-	}
-	if session.ID != sessionID {
-		t.Fatalf("unexpected session id: %q", session.ID)
 	}
 }
 
