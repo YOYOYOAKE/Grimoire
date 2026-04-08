@@ -99,7 +99,7 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 	if reply == "" {
 		return
 	}
-	if _, err := b.sendMessage(ctx, message.Chat.ID, reply, nil, message.MessageID); err != nil {
+	if _, err := b.sendMessage(ctx, message.Chat.ID, reply, nil, 0); err != nil {
 		b.logWarn("send chat reply failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "error", err)
 		return
 	}
@@ -250,7 +250,7 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 			return
 		}
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "已发送 prompt", false)
-		if _, err := b.sendMessage(ctx, query.Message.Chat.ID, buildPromptText(prompt), nil, query.Message.MessageID); err != nil {
+		if _, err := b.sendMessage(ctx, query.Message.Chat.ID, buildPromptText(prompt), nil, 0); err != nil {
 			b.logWarn("send prompt message failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
 			return
 		}

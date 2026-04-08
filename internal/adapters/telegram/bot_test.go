@@ -258,6 +258,9 @@ func TestHandleMessageUsesChatService(t *testing.T) {
 	if strings.Contains(buffer.String(), `待确认 request`) {
 		t.Fatalf("did not expect pending request message, got %s", buffer.String())
 	}
+	if strings.Contains(buffer.String(), `"reply_to_message_id":10`) {
+		t.Fatalf("did not expect chat reply to quote the incoming message, got %s", buffer.String())
+	}
 }
 
 func TestHandleMessageLogsInboundAndOutboundLifecycle(t *testing.T) {
@@ -769,6 +772,9 @@ func TestHandleTaskPromptCallbackSendsPromptMessage(t *testing.T) {
 	}
 	if !strings.Contains(buffer.String(), `Prompt`) || !strings.Contains(buffer.String(), `masterpiece, moonlit_girl`) {
 		t.Fatalf("expected prompt message in output, got %s", buffer.String())
+	}
+	if strings.Contains(buffer.String(), `"reply_to_message_id":34`) {
+		t.Fatalf("did not expect prompt message to quote the callback message, got %s", buffer.String())
 	}
 }
 
