@@ -45,6 +45,7 @@ func TestRunWithSQLiteRepositoryPersistsCompletedTaskAndImage(t *testing.T) {
 		store,
 		&notifierStub{sendTextID: "progress-1", sendImageID: "result-1"},
 		func() time.Time { return time.Unix(10, 0).UTC() },
+		nil,
 	)
 
 	if err := service.Run(ctx, RunCommand{TaskID: "task-1"}); err != nil {
@@ -92,6 +93,7 @@ func TestRunWithSQLiteRepositoryPersistsFailureState(t *testing.T) {
 		&imageStoreStub{path: "data/images/user-1/task-1.jpg"},
 		&notifierStub{sendTextID: "progress-1"},
 		func() time.Time { return time.Unix(10, 0).UTC() },
+		nil,
 	)
 
 	if err := service.Run(ctx, RunCommand{TaskID: "task-1"}); err != nil {

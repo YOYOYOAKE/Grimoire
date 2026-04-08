@@ -86,6 +86,7 @@ func TestAcceptanceStartupRecoveryFlow(t *testing.T) {
 		store,
 		notifier,
 		func() time.Time { return time.Unix(4, 0).UTC() },
+		nil,
 	)
 
 	runErrCh := make(chan error, 1)

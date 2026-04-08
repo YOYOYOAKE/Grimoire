@@ -250,6 +250,7 @@ func newSQLiteBackedTestBot(
 				scheduler,
 				func() time.Time { return time.Unix(10, 0).UTC() },
 				taskIDGenerator,
+				nil,
 			),
 			nil,
 		))
@@ -262,6 +263,7 @@ func newSQLiteBackedTestBot(
 		scheduler,
 		func() time.Time { return time.Unix(10, 0).UTC() },
 		taskIDGenerator,
+		nil,
 	))
 
 	return bot, taskRepo, scheduler, buffer

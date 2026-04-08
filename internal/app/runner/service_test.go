@@ -70,7 +70,7 @@ func TestStartTranslatingMovesQueuedTaskToTranslating(t *testing.T) {
 		order:      &order,
 	}
 	txRunner := &runnerTxRunnerStub{order: &order}
-	service := NewService(repository, txRunner, nil, nil, nil, nil, func() time.Time { return time.Unix(2, 0).UTC() })
+	service := NewService(repository, txRunner, nil, nil, nil, nil, func() time.Time { return time.Unix(2, 0).UTC() }, nil)
 
 	task, err := service.StartTranslating(context.Background(), RunCommand{TaskID: " task-1 "})
 	if err != nil {
@@ -93,7 +93,7 @@ func TestStartDrawingPersistsPromptAndMovesTaskToDrawing(t *testing.T) {
 	repository := &runnerTaskRepositoryStub{
 		storedTask: mustRunnerTranslatingTask(t, "task-1", ""),
 	}
-	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(3, 0).UTC() })
+	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(3, 0).UTC() }, nil)
 
 	task, err := service.StartDrawing(context.Background(), StartDrawingCommand{
 		TaskID: "task-1",
@@ -118,7 +118,7 @@ func TestStartDrawingUsesExistingPromptForRetryTask(t *testing.T) {
 	repository := &runnerTaskRepositoryStub{
 		storedTask: mustRunnerTranslatingTask(t, "task-1", "masterpiece, moonlit_girl"),
 	}
-	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(3, 0).UTC() })
+	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(3, 0).UTC() }, nil)
 
 	task, err := service.StartDrawing(context.Background(), StartDrawingCommand{TaskID: "task-1"})
 	if err != nil {
@@ -141,6 +141,7 @@ func TestStartDrawingRejectsBlankPromptWithoutExistingPrompt(t *testing.T) {
 		nil,
 		nil,
 		func() time.Time { return time.Unix(3, 0).UTC() },
+		nil,
 	)
 
 	_, err := service.StartDrawing(context.Background(), StartDrawingCommand{TaskID: "task-1"})
@@ -153,7 +154,7 @@ func TestCompleteMovesDrawingTaskToCompleted(t *testing.T) {
 	repository := &runnerTaskRepositoryStub{
 		storedTask: mustRunnerDrawingTask(t, "task-1"),
 	}
-	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(4, 0).UTC() })
+	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(4, 0).UTC() }, nil)
 
 	task, err := service.Complete(context.Background(), CompleteCommand{
 		TaskID: "task-1",
@@ -182,7 +183,7 @@ func TestFailMovesTaskToFailed(t *testing.T) {
 	repository := &runnerTaskRepositoryStub{
 		storedTask: mustRunnerDrawingTask(t, "task-1"),
 	}
-	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(4, 0).UTC() })
+	service := NewService(repository, &runnerTxRunnerStub{}, nil, nil, nil, nil, func() time.Time { return time.Unix(4, 0).UTC() }, nil)
 
 	task, err := service.Fail(context.Background(), FailCommand{
 		TaskID: "task-1",
@@ -216,6 +217,7 @@ func TestStoppedTaskRejectsFurtherTransition(t *testing.T) {
 		nil,
 		nil,
 		func() time.Time { return time.Unix(5, 0).UTC() },
+		nil,
 	)
 
 	_, err := service.StartTranslating(context.Background(), RunCommand{TaskID: "task-1"})
@@ -225,7 +227,7 @@ func TestStoppedTaskRejectsFurtherTransition(t *testing.T) {
 }
 
 func TestUpdateTaskRequiresTxRunner(t *testing.T) {
-	service := NewService(&runnerTaskRepositoryStub{}, nil, nil, nil, nil, nil, nil)
+	service := NewService(&runnerTaskRepositoryStub{}, nil, nil, nil, nil, nil, nil, nil)
 
 	_, err := service.StartTranslating(context.Background(), RunCommand{TaskID: "task-1"})
 	if !errors.Is(err, ErrTxRunnerRequired) {
@@ -241,32 +243,32 @@ func TestRequireRunDependencies(t *testing.T) {
 	}{
 		{
 			name:    "missing repository",
-			service: NewService(nil, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil),
+			service: NewService(nil, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil, nil),
 			wantErr: ErrTaskRepositoryRequired,
 		},
 		{
 			name:    "missing tx runner",
-			service: NewService(&runnerTaskRepositoryStub{}, nil, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil),
+			service: NewService(&runnerTaskRepositoryStub{}, nil, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil, nil),
 			wantErr: ErrTxRunnerRequired,
 		},
 		{
 			name:    "missing translator",
-			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, nil, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil),
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, nil, &imageGeneratorStub{}, &imageStoreStub{}, &notifierStub{}, nil, nil),
 			wantErr: ErrTranslatorRequired,
 		},
 		{
 			name:    "missing generator",
-			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, nil, &imageStoreStub{}, &notifierStub{}, nil),
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, nil, &imageStoreStub{}, &notifierStub{}, nil, nil),
 			wantErr: ErrGeneratorRequired,
 		},
 		{
 			name:    "missing image store",
-			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, nil, &notifierStub{}, nil),
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, nil, &notifierStub{}, nil, nil),
 			wantErr: ErrImageStoreRequired,
 		},
 		{
 			name:    "missing notifier",
-			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, nil, nil),
+			service: NewService(&runnerTaskRepositoryStub{}, &runnerTxRunnerStub{}, &translatorStub{}, &imageGeneratorStub{}, &imageStoreStub{}, nil, nil, nil),
 			wantErr: ErrNotifierRequired,
 		},
 	}

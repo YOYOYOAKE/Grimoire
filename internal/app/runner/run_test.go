@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,7 +137,7 @@ func TestRunSuccessPathPersistsImageAndMessages(t *testing.T) {
 	generator := &imageGeneratorStub{image: []byte("png")}
 	store := &imageStoreStub{path: "data/images/user-1/task-1.jpg"}
 	notifier := &notifierStub{sendTextID: "progress-1", sendImageID: "result-1"}
-	service := NewService(repository, &runnerTxRunnerStub{}, translator, generator, store, notifier, func() time.Time { return time.Unix(10, 0).UTC() })
+	service := NewService(repository, &runnerTxRunnerStub{}, translator, generator, store, notifier, func() time.Time { return time.Unix(10, 0).UTC() }, nil)
 
 	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
 		t.Fatalf("run task: %v", err)
@@ -205,6 +207,7 @@ func TestRunGeneratorFailureWritesStructuredTaskError(t *testing.T) {
 		&imageStoreStub{path: "data/images/user-1/task-1.jpg"},
 		&notifierStub{sendTextID: "progress-1"},
 		func() time.Time { return time.Unix(10, 0).UTC() },
+		nil,
 	)
 
 	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
@@ -236,6 +239,7 @@ func TestRunSendImageFailureWritesStructuredTaskError(t *testing.T) {
 		store,
 		&notifierStub{sendTextID: "progress-1", sendImageErr: errors.New("send failed")},
 		func() time.Time { return time.Unix(10, 0).UTC() },
+		nil,
 	)
 
 	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
@@ -278,6 +282,7 @@ func TestRunStopsAfterGenerateWhenTaskIsStoppedConcurrently(t *testing.T) {
 		store,
 		notifier,
 		func() time.Time { return time.Unix(10, 0).UTC() },
+		nil,
 	)
 
 	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
@@ -311,10 +316,87 @@ func TestRunIgnoresMissingTask(t *testing.T) {
 		&imageStoreStub{},
 		&notifierStub{},
 		func() time.Time { return time.Unix(10, 0).UTC() },
+		nil,
 	)
 
 	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
 		t.Fatalf("run task: %v", err)
+	}
+}
+
+func TestRunLogsSuccessLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	repository := &runnerTaskRepositoryStub{
+		storedTask: mustRunnerQueuedTaskWithContext(t, "task-1", `{"version":1,"shape":"square","artists":"artist:foo"}`),
+	}
+	service := NewService(
+		repository,
+		&runnerTxRunnerStub{},
+		&translatorStub{result: domaindraw.Translation{Prompt: "moonlit_girl", NegativePrompt: "blurry"}},
+		&imageGeneratorStub{image: []byte("png")},
+		&imageStoreStub{path: "data/images/user-1/task-1.jpg"},
+		&notifierStub{sendTextID: "progress-1", sendImageID: "result-1"},
+		func() time.Time { return time.Unix(10, 0).UTC() },
+		logger,
+	)
+
+	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
+		t.Fatalf("run task: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"runner run started",
+		"runner task loaded",
+		"runner execution context parsed",
+		"runner translate requested",
+		"runner translate succeeded",
+		"runner image generation requested",
+		"runner image generation succeeded",
+		"runner image stored",
+		"runner result notification sent",
+		"runner task completed",
+		"task_id=task-1",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+}
+
+func TestRunLogsFailureLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	repository := &runnerTaskRepositoryStub{
+		storedTask: mustRunnerQueuedTaskWithContext(t, "task-1", `{"version":1,"shape":"square","artists":"artist:foo"}`),
+	}
+	service := NewService(
+		repository,
+		&runnerTxRunnerStub{},
+		&translatorStub{result: domaindraw.Translation{Prompt: "moonlit_girl", NegativePrompt: "blurry"}},
+		&imageGeneratorStub{err: errors.New("boom")},
+		&imageStoreStub{path: "data/images/user-1/task-1.jpg"},
+		&notifierStub{sendTextID: "progress-1"},
+		func() time.Time { return time.Unix(10, 0).UTC() },
+		logger,
+	)
+
+	if err := service.Run(context.Background(), RunCommand{TaskID: "task-1"}); err != nil {
+		t.Fatalf("run task: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"runner image generation requested",
+		"runner task failed",
+		"error_code=IMAGE_GENERATE_FAILED",
+		"error_stage=drawing",
+		"error_message=boom",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
 	}
 }
 

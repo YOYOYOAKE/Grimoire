@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,7 +110,7 @@ func TestCreatePersistsQueuedTaskAndEnqueuesAfterCommit(t *testing.T) {
 	txRunner := &taskTxRunnerStub{order: &order}
 	scheduler := &schedulerStub{order: &order}
 	now := func() time.Time { return time.Unix(1, 0).UTC() }
-	service := NewService(repository, txRunner, scheduler, now, func() string { return "task-1" })
+	service := NewService(repository, txRunner, scheduler, now, func() string { return "task-1" }, nil)
 
 	task, err := service.Create(context.Background(), CreateCommand{
 		UserID:    "user-1",
@@ -158,6 +160,7 @@ func TestCreateReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
 		&schedulerStub{err: schedulerErr},
 		func() time.Time { return time.Unix(1, 0).UTC() },
 		func() string { return "task-1" },
+		nil,
 	)
 
 	task, err := service.Create(context.Background(), CreateCommand{
@@ -183,7 +186,7 @@ func TestCreateReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
 }
 
 func TestCreateRequiresTxRunner(t *testing.T) {
-	service := NewService(nil, nil, &schedulerStub{}, nil, nil)
+	service := NewService(nil, nil, &schedulerStub{}, nil, nil, nil)
 
 	_, err := service.Create(context.Background(), CreateCommand{
 		UserID:    "user-1",
@@ -197,7 +200,7 @@ func TestCreateRequiresTxRunner(t *testing.T) {
 }
 
 func TestCreateRequiresScheduler(t *testing.T) {
-	service := NewService(nil, &taskTxRunnerStub{}, nil, nil, nil)
+	service := NewService(nil, &taskTxRunnerStub{}, nil, nil, nil, nil)
 
 	_, err := service.Create(context.Background(), CreateCommand{
 		UserID:    "user-1",
@@ -219,6 +222,7 @@ func TestCreateReturnsRepositoryErrorWithoutScheduling(t *testing.T) {
 		&schedulerStub{order: &order},
 		func() time.Time { return time.Unix(1, 0).UTC() },
 		func() string { return "task-1" },
+		nil,
 	)
 
 	_, err := service.Create(context.Background(), CreateCommand{
@@ -237,6 +241,44 @@ func TestCreateReturnsRepositoryErrorWithoutScheduling(t *testing.T) {
 	}
 }
 
+func TestCreateLogsLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	service := NewService(
+		&taskRepositoryStub{},
+		&taskTxRunnerStub{},
+		&schedulerStub{},
+		func() time.Time { return time.Unix(1, 0).UTC() },
+		func() string { return "task-1" },
+		logger,
+	)
+
+	if _, err := service.Create(context.Background(), CreateCommand{
+		UserID:    "user-1",
+		SessionID: "session-1",
+		Request:   "draw a moonlit girl",
+		Context:   mustTaskContext(t, `{"summary":{"topic":"moon"}}`),
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"task create requested",
+		"user_id=user-1",
+		"session_id=session-1",
+		"request=\"draw a moonlit girl\"",
+		"task persisted",
+		"operation=create",
+		"task enqueued",
+		"task_id=task-1",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+}
+
 func TestStopMarksTaskStoppedWithinTransaction(t *testing.T) {
 	order := []string{}
 	repository := &taskRepositoryStub{
@@ -244,7 +286,7 @@ func TestStopMarksTaskStoppedWithinTransaction(t *testing.T) {
 		order:      &order,
 	}
 	txRunner := &taskTxRunnerStub{order: &order}
-	service := NewService(repository, txRunner, nil, func() time.Time { return time.Unix(4, 0).UTC() }, nil)
+	service := NewService(repository, txRunner, nil, func() time.Time { return time.Unix(4, 0).UTC() }, nil, nil)
 
 	task, err := service.Stop(context.Background(), StopCommand{TaskID: " task-1 ", UserID: " user-1 "})
 	if err != nil {
@@ -282,6 +324,7 @@ func TestStopReturnsExistingStoppedTaskWithoutExtraUpdate(t *testing.T) {
 		nil,
 		func() time.Time { return time.Unix(5, 0).UTC() },
 		nil,
+		nil,
 	)
 
 	task, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1", UserID: "user-1"})
@@ -298,7 +341,7 @@ func TestStopReturnsExistingStoppedTaskWithoutExtraUpdate(t *testing.T) {
 }
 
 func TestStopRequiresTxRunner(t *testing.T) {
-	service := NewService(nil, nil, nil, nil, nil)
+	service := NewService(nil, nil, nil, nil, nil, nil)
 
 	_, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1", UserID: "user-1"})
 	if !errors.Is(err, ErrTxRunnerRequired) {
@@ -316,6 +359,7 @@ func TestStopRejectsTaskOwnedByAnotherUser(t *testing.T) {
 		&taskTxRunnerStub{order: &order},
 		nil,
 		func() time.Time { return time.Unix(4, 0).UTC() },
+		nil,
 		nil,
 	)
 
@@ -339,7 +383,7 @@ func TestRetryTranslateCreatesChildTaskAndClearsPrompt(t *testing.T) {
 	txRunner := &taskTxRunnerStub{order: &order}
 	scheduler := &schedulerStub{order: &order}
 	now := func() time.Time { return time.Unix(5, 0).UTC() }
-	service := NewService(repository, txRunner, scheduler, now, func() string { return "task-2" })
+	service := NewService(repository, txRunner, scheduler, now, func() string { return "task-2" }, nil)
 
 	task, err := service.RetryTranslate(context.Background(), RetryCommand{TaskID: " task-1 ", UserID: " user-1 "})
 	if err != nil {
@@ -373,6 +417,40 @@ func TestRetryTranslateCreatesChildTaskAndClearsPrompt(t *testing.T) {
 	}
 }
 
+func TestRetryDrawLogsSourceLifecycle(t *testing.T) {
+	var logBuffer strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
+	source := mustDrawingTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl")
+	service := NewService(
+		&taskRepositoryStub{storedTask: source},
+		&taskTxRunnerStub{},
+		&schedulerStub{},
+		func() time.Time { return time.Unix(5, 0).UTC() },
+		func() string { return "task-2" },
+		logger,
+	)
+
+	if _, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"}); err != nil {
+		t.Fatalf("retry draw: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"task retry requested",
+		"operation=retry_draw",
+		"reuse_prompt=true",
+		"task retry source loaded",
+		"source_task_id=task-1",
+		"task persisted",
+		"task enqueued",
+		"task_id=task-2",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+}
+
 func TestRetryDrawCreatesChildTaskAndReusesPrompt(t *testing.T) {
 	source := mustDrawingTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl")
 	service := NewService(
@@ -381,6 +459,7 @@ func TestRetryDrawCreatesChildTaskAndReusesPrompt(t *testing.T) {
 		&schedulerStub{},
 		func() time.Time { return time.Unix(5, 0).UTC() },
 		func() string { return "task-2" },
+		nil,
 	)
 
 	task, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
@@ -416,6 +495,7 @@ func TestRetryDrawReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
 		&schedulerStub{err: schedulerErr},
 		func() time.Time { return time.Unix(5, 0).UTC() },
 		func() string { return "task-2" },
+		nil,
 	)
 
 	task, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
@@ -440,7 +520,7 @@ func TestRetryDrawRejectsSourceWithoutPrompt(t *testing.T) {
 		storedTask: mustTaskFixture(t, "task-1", "user-1", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC()),
 	}
 	scheduler := &schedulerStub{}
-	service := NewService(repository, &taskTxRunnerStub{}, scheduler, nil, func() string { return "task-2" })
+	service := NewService(repository, &taskTxRunnerStub{}, scheduler, nil, func() string { return "task-2" }, nil)
 
 	_, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
 	if err == nil {
@@ -459,7 +539,7 @@ func TestRetryTranslateRejectsTaskOwnedByAnotherUser(t *testing.T) {
 		storedTask: mustDrawingTaskFixture(t, "task-1", "user-2", "session-1", "draw a moonlit girl"),
 	}
 	scheduler := &schedulerStub{}
-	service := NewService(repository, &taskTxRunnerStub{}, scheduler, nil, func() string { return "task-2" })
+	service := NewService(repository, &taskTxRunnerStub{}, scheduler, nil, func() string { return "task-2" }, nil)
 
 	_, err := service.RetryTranslate(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
 	if !errors.Is(err, ErrTaskAccessDenied) {
@@ -481,6 +561,7 @@ func TestGetReturnsTask(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	task, err := service.Get(context.Background(), " task-1 ")
@@ -493,7 +574,7 @@ func TestGetReturnsTask(t *testing.T) {
 }
 
 func TestGetRejectsBlankTaskID(t *testing.T) {
-	service := NewService(&taskRepositoryStub{}, nil, nil, nil, nil)
+	service := NewService(&taskRepositoryStub{}, nil, nil, nil, nil, nil)
 
 	_, err := service.Get(context.Background(), " \t ")
 	if err == nil {
@@ -509,6 +590,7 @@ func TestGetPromptReturnsPrompt(t *testing.T) {
 
 	service := NewService(
 		&taskRepositoryStub{storedTask: taskFixture},
+		nil,
 		nil,
 		nil,
 		nil,
@@ -532,6 +614,7 @@ func TestGetPromptRejectsTaskOwnedByAnotherUser(t *testing.T) {
 
 	service := NewService(
 		&taskRepositoryStub{storedTask: taskFixture},
+		nil,
 		nil,
 		nil,
 		nil,

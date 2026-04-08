@@ -313,6 +313,7 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 			taskIndex++
 			return fmt.Sprintf("task-%d", taskIndex)
 		},
+		nil,
 	)
 	chatService := chatapp.NewService(userRepo, sessionService, conversationService, taskService, nil)
 
@@ -333,6 +334,7 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 		imageStore,
 		notifier,
 		func() time.Time { return time.Unix(4, 0).UTC() },
+		nil,
 	)
 
 	bot.SetAccessService(accessapp.NewService(userRepo))

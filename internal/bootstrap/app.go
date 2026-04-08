@@ -106,6 +106,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		imageStore,
 		runnerNotifier,
 		systemClock.Now,
+		logger,
 	)
 	runnerWorker := memoryqueue.NewWorker(workerConcurrency, func(ctx context.Context, taskID string) {
 		if err := runnerService.Run(ctx, runnerapp.RunCommand{TaskID: taskID}); err != nil {
@@ -120,6 +121,7 @@ func NewApp(cfg config.Config, configPath string, logger *slog.Logger) (*App, er
 		runnerScheduler,
 		systemClock.Now,
 		idGenerator.NewString,
+		logger,
 	)
 	chatService := chatapp.NewService(preferenceRepo, sessionService, conversationService, taskService, logger)
 
