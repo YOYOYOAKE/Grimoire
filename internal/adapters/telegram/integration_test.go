@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -222,7 +223,7 @@ func newSQLiteBackedTestBot(
 			return taskID
 		}
 		taskIndex++
-		return "task-generated-" + time.Unix(int64(taskIndex), 0).UTC().Format("150405")
+		return "task-generated-" + strconv.Itoa(taskIndex)
 	}
 
 	bot.SetAccessService(accessapp.NewService(userRepo))
