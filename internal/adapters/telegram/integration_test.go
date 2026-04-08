@@ -85,9 +85,6 @@ func TestHandleMessageWithSQLiteChatServicesCreatesTaskFromConversationToolCall(
 	if len(scheduler.taskIDs) != 1 || scheduler.taskIDs[0] != "task-confirm" {
 		t.Fatalf("unexpected scheduled task ids: %#v", scheduler.taskIDs)
 	}
-	if model.input.Preference.Shape != domaindraw.ShapePortrait || model.input.Preference.Artists != "artist:foo" {
-		t.Fatalf("unexpected conversation preference: %#v", model.input.Preference)
-	}
 	if len(model.input.Messages) != 1 || model.input.Messages[0].Content != "开始绘图" {
 		t.Fatalf("unexpected conversation messages: %#v", model.input.Messages)
 	}

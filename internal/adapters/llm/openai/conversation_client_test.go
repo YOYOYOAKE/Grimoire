@@ -12,8 +12,6 @@ import (
 
 	conversationapp "grimoire/internal/app/conversation"
 	"grimoire/internal/config"
-	domaindraw "grimoire/internal/domain/draw"
-	domainpreferences "grimoire/internal/domain/preferences"
 	domainsession "grimoire/internal/domain/session"
 )
 
@@ -106,9 +104,8 @@ func TestConverseSendsStructuredPayload(t *testing.T) {
 	if _, ok := userPayload["summary"].(map[string]any); !ok {
 		t.Fatalf("expected json summary payload, got %#v", userPayload["summary"])
 	}
-	preference, ok := userPayload["preference"].(map[string]any)
-	if !ok || preference["shape"] != string(domaindraw.ShapePortrait) {
-		t.Fatalf("unexpected preference payload: %#v", userPayload["preference"])
+	if _, ok := userPayload["preference"]; ok {
+		t.Fatalf("did not expect preference payload, got %#v", userPayload["preference"])
 	}
 	tools, ok := requestBody["tools"].([]any)
 	if !ok || len(tools) != 1 {
@@ -220,7 +217,7 @@ func TestConverseParsesToolCallResponse(t *testing.T) {
 									"arguments": mustJSON(t, map[string]any{
 										"request": "绘制月下城堡少女",
 										"summary": map[string]any{
-											"goal": "castle",
+											"goal":  "castle",
 											"ready": true,
 										},
 									}),
@@ -407,18 +404,13 @@ func newTestConversationClient(t *testing.T, logger *slog.Logger, transport roun
 func newConversationInput(t *testing.T) conversationapp.ConversationInput {
 	t.Helper()
 
-	preference, err := domainpreferences.New(domaindraw.ShapePortrait, "artist:foo")
-	if err != nil {
-		t.Fatalf("new preference: %v", err)
-	}
 	message, err := domainsession.NewMessage("message-1", "session-1", domainsession.MessageRoleUser, "我想画一座城堡", time.Unix(1, 0))
 	if err != nil {
 		t.Fatalf("new message: %v", err)
 	}
 	return conversationapp.ConversationInput{
-		SessionID:  "session-1",
-		Summary:    domainsession.NewSummary(`{"goal":"castle"}`),
-		Messages:   []domainsession.Message{message},
-		Preference: preference,
+		SessionID: "session-1",
+		Summary:   domainsession.NewSummary(`{"goal":"castle"}`),
+		Messages:  []domainsession.Message{message},
 	}
 }

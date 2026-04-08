@@ -99,8 +99,7 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 	)
 
 	result, err := s.conversations.Converse(ctx, conversationapp.ConverseCommand{
-		SessionID:  currentSession.ID,
-		Preference: user.Preference,
+		SessionID: currentSession.ID,
 	})
 	if err != nil {
 		return HandleTextResult{}, err

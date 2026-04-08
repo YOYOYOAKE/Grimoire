@@ -98,7 +98,7 @@ func (c *TranslateClient) translate(ctx context.Context, prompt string, shape do
 		"model": c.cfg.Model,
 		"messages": []map[string]string{
 			{"role": "system", "content": translateSystemPrompt},
-			{"role": "user", "content": fmt.Sprintf("shape=%s\nrequest=%s", shape, strings.TrimSpace(prompt))},
+			{"role": "user", "content": fmt.Sprintf("request=%s", strings.TrimSpace(prompt))},
 		},
 		"temperature": 0.2,
 		"stream":      false,

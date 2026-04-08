@@ -112,6 +112,25 @@ func TestTranslateSendsToolChoiceRequest(t *testing.T) {
 		t.Fatalf("unexpected prompt: %q", translation.Prompt)
 	}
 
+	messages, ok := requestBody["messages"].([]any)
+	if !ok || len(messages) != 2 {
+		t.Fatalf("unexpected messages payload: %#v", requestBody["messages"])
+	}
+	userMessage, ok := messages[1].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected user message payload: %#v", messages[1])
+	}
+	content, ok := userMessage["content"].(string)
+	if !ok {
+		t.Fatalf("unexpected user message content: %#v", userMessage["content"])
+	}
+	if !strings.Contains(content, "request=画一个月下的少女") {
+		t.Fatalf("expected request payload, got %q", content)
+	}
+	if strings.Contains(content, "shape=") {
+		t.Fatalf("did not expect shape payload, got %q", content)
+	}
+
 	if _, ok := requestBody["response_format"]; ok {
 		t.Fatal("response_format should not be sent")
 	}

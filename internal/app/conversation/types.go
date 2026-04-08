@@ -1,13 +1,9 @@
 package conversation
 
-import (
-	domainpreferences "grimoire/internal/domain/preferences"
-	domainsession "grimoire/internal/domain/session"
-)
+import domainsession "grimoire/internal/domain/session"
 
 type ConverseCommand struct {
-	SessionID  string
-	Preference domainpreferences.Preference
+	SessionID string
 }
 
 type ConverseResult struct {

@@ -3,7 +3,6 @@ package conversation
 import (
 	"context"
 
-	domainpreferences "grimoire/internal/domain/preferences"
 	domainsession "grimoire/internal/domain/session"
 )
 
@@ -22,10 +21,9 @@ type TxRunner interface {
 }
 
 type ConversationInput struct {
-	SessionID  string
-	Summary    domainsession.Summary
-	Messages   []domainsession.Message
-	Preference domainpreferences.Preference
+	SessionID string
+	Summary   domainsession.Summary
+	Messages  []domainsession.Message
 }
 
 type CreateDrawingTask struct {

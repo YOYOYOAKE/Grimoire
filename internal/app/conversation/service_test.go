@@ -9,7 +9,6 @@ import (
 	"time"
 
 	sqliterepo "grimoire/internal/adapters/repository/sqlite"
-	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
 	domainsession "grimoire/internal/domain/session"
 	platformid "grimoire/internal/platform/id"
@@ -114,13 +113,8 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	now := func() time.Time { return time.Unix(2, 0).UTC() }
 	service := NewService(model, sessions, messages, txRunner, 15, now, func() string { return "assistant-1" }, nil)
 
-	preference, err := domainpreferences.New(domaindraw.ShapeSquare, "artist:foo")
-	if err != nil {
-		t.Fatalf("new preference: %v", err)
-	}
 	result, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  " session-1 ",
-		Preference: preference,
+		SessionID: " session-1 ",
 	})
 	if err != nil {
 		t.Fatalf("converse: %v", err)
@@ -143,9 +137,6 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	}
 	if len(model.input.Messages) != 1 || model.input.Messages[0].ID != "msg-1" {
 		t.Fatalf("unexpected model messages: %#v", model.input.Messages)
-	}
-	if model.input.Preference.Artists != "artist:foo" {
-		t.Fatalf("unexpected preference artists: %q", model.input.Preference.Artists)
 	}
 	if result.Reply != "hi there" {
 		t.Fatalf("unexpected reply: %q", result.Reply)
@@ -195,10 +186,7 @@ func TestConverseReloadsLatestSessionBeforePersisting(t *testing.T) {
 		nil,
 	)
 
-	_, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
-	})
+	_, err := service.Converse(context.Background(), ConverseCommand{SessionID: "session-1"})
 	if err != nil {
 		t.Fatalf("converse: %v", err)
 	}
@@ -222,10 +210,7 @@ func TestConversePersistsSummaryWithoutAssistantReplyWhenCreatingTask(t *testing
 	}
 	service := NewService(model, sessions, messages, txRunner, 15, func() time.Time { return time.Unix(2, 0).UTC() }, func() string { return "assistant-1" }, nil)
 
-	result, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
-	})
+	result, err := service.Converse(context.Background(), ConverseCommand{SessionID: "session-1"})
 	if err != nil {
 		t.Fatalf("converse: %v", err)
 	}
@@ -261,10 +246,7 @@ func TestConverseReturnsModelErrorWithoutOpeningTransaction(t *testing.T) {
 		nil,
 	)
 
-	_, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
-	})
+	_, err := service.Converse(context.Background(), ConverseCommand{SessionID: "session-1"})
 	if !errors.Is(err, modelErr) {
 		t.Fatalf("expected model error, got %v", err)
 	}
@@ -293,8 +275,7 @@ func TestConverseRejectsReplyAndCreateDrawingTaskTogether(t *testing.T) {
 	)
 
 	if _, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
+		SessionID: "session-1",
 	}); err == nil {
 		t.Fatal("expected error")
 	}
@@ -303,10 +284,7 @@ func TestConverseRejectsReplyAndCreateDrawingTaskTogether(t *testing.T) {
 func TestConverseRequiresTxRunner(t *testing.T) {
 	service := NewService(nil, nil, nil, nil, 10, nil, nil, nil)
 
-	_, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
-	})
+	_, err := service.Converse(context.Background(), ConverseCommand{SessionID: "session-1"})
 	if !errors.Is(err, ErrTxRunnerRequired) {
 		t.Fatalf("expected tx runner required error, got %v", err)
 	}
@@ -315,10 +293,7 @@ func TestConverseRequiresTxRunner(t *testing.T) {
 func TestConverseRejectsNonPositiveRecentMessageLimit(t *testing.T) {
 	service := NewService(nil, nil, nil, &conversationTxRunnerStub{}, 0, nil, nil, nil)
 
-	_, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
-	})
+	_, err := service.Converse(context.Background(), ConverseCommand{SessionID: "session-1"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -354,10 +329,7 @@ func TestConverseRollsBackAssistantReplyWhenSaveFails(t *testing.T) {
 		nil,
 	)
 
-	_, err := service.Converse(ctx, ConverseCommand{
-		SessionID:  session.ID,
-		Preference: domainpreferences.DefaultPreference(),
-	})
+	_, err := service.Converse(ctx, ConverseCommand{SessionID: session.ID})
 	if !errors.Is(err, saveErr) {
 		t.Fatalf("expected save error, got %v", err)
 	}
@@ -419,10 +391,7 @@ func TestConverseLogsConversationLifecycle(t *testing.T) {
 		logger,
 	)
 
-	if _, err := service.Converse(context.Background(), ConverseCommand{
-		SessionID:  "session-1",
-		Preference: domainpreferences.DefaultPreference(),
-	}); err != nil {
+	if _, err := service.Converse(context.Background(), ConverseCommand{SessionID: "session-1"}); err != nil {
 		t.Fatalf("converse: %v", err)
 	}
 
@@ -437,6 +406,11 @@ func TestConverseLogsConversationLifecycle(t *testing.T) {
 	} {
 		if !strings.Contains(logOutput, expected) {
 			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+	for _, unexpected := range []string{"preference_shape=", "preference_artists="} {
+		if strings.Contains(logOutput, unexpected) {
+			t.Fatalf("did not expect %q in logs, got %s", unexpected, logOutput)
 		}
 	}
 }

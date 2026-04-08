@@ -149,9 +149,6 @@ func TestHandleTextGetsSessionAppendsMessageAndConverse(t *testing.T) {
 	if conversations.got.SessionID != "session-1" {
 		t.Fatalf("unexpected conversation session id: %q", conversations.got.SessionID)
 	}
-	if conversations.got.Preference.Artists != "artist:foo" {
-		t.Fatalf("unexpected conversation preference artists: %q", conversations.got.Preference.Artists)
-	}
 	if result.SessionID != "session-1" {
 		t.Fatalf("unexpected result session id: %q", result.SessionID)
 	}

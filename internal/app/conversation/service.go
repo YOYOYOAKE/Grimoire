@@ -69,10 +69,6 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	if sessionID == "" {
 		return ConverseResult{}, fmt.Errorf("session id is required")
 	}
-	if err := command.Preference.Validate(); err != nil {
-		return ConverseResult{}, err
-	}
-
 	session, err := s.sessions.Get(ctx, sessionID)
 	if err != nil {
 		return ConverseResult{}, err
@@ -88,15 +84,12 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 		"recent_message_count", len(recentMessages),
 		"summary", session.Summary.Content(),
 		"messages", recentMessages,
-		"preference_shape", command.Preference.Shape,
-		"preference_artists", command.Preference.Artists,
 	)
 
 	output, err := s.model.Converse(ctx, ConversationInput{
-		SessionID:  sessionID,
-		Summary:    session.Summary,
-		Messages:   recentMessages,
-		Preference: command.Preference,
+		SessionID: sessionID,
+		Summary:   session.Summary,
+		Messages:  recentMessages,
 	})
 	if err != nil {
 		return ConverseResult{}, err

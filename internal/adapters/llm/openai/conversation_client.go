@@ -30,19 +30,13 @@ type ConversationClient struct {
 }
 
 type conversationRequestPayload struct {
-	Summary    json.RawMessage               `json:"summary"`
-	Messages   []conversationMessagePayload  `json:"messages"`
-	Preference conversationPreferencePayload `json:"preference"`
+	Summary  json.RawMessage              `json:"summary"`
+	Messages []conversationMessagePayload `json:"messages"`
 }
 
 type conversationMessagePayload struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
-}
-
-type conversationPreferencePayload struct {
-	Shape   string `json:"shape"`
-	Artists string `json:"artists,omitempty"`
 }
 
 const (
@@ -137,10 +131,6 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 }
 
 func buildConversationPayload(input conversation.ConversationInput) (conversationRequestPayload, error) {
-	if err := input.Preference.Validate(); err != nil {
-		return conversationRequestPayload{}, err
-	}
-
 	summaryRaw := []byte(input.Summary.Content())
 	if !json.Valid(summaryRaw) || !isJSONObject(summaryRaw) {
 		return conversationRequestPayload{}, fmt.Errorf("conversation summary must be json object")
@@ -160,10 +150,6 @@ func buildConversationPayload(input conversation.ConversationInput) (conversatio
 	return conversationRequestPayload{
 		Summary:  json.RawMessage(summaryRaw),
 		Messages: messages,
-		Preference: conversationPreferencePayload{
-			Shape:   string(input.Preference.Shape),
-			Artists: input.Preference.Artists,
-		},
 	}, nil
 }
 
