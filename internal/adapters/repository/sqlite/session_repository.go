@@ -17,10 +17,9 @@ type SessionRepository struct {
 }
 
 type sessionRecord struct {
-	ID      string
-	UserID  string
-	Length  int
-	Summary string
+	ID     string
+	UserID string
+	Length int
 }
 
 func NewSessionRepository(db *sql.DB, generator platformid.Generator) *SessionRepository {
@@ -93,20 +92,19 @@ func (r *SessionRepository) CreateNewActiveByUserID(ctx context.Context, userID 
 }
 
 func (r *SessionRepository) Save(ctx context.Context, session domainsession.Session) error {
-	normalized, err := domainsession.Restore(session.ID, session.UserID, session.Length, session.Summary)
+	normalized, err := domainsession.Restore(session.ID, session.UserID, session.Length)
 	if err != nil {
 		return err
 	}
 
 	result, err := ConnFromContext(ctx, r.db).ExecContext(
 		ctx,
-		`INSERT INTO sessions(id, user_id, length, summary) VALUES (?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET length = excluded.length, summary = excluded.summary
+		`INSERT INTO sessions(id, user_id, length) VALUES (?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET length = excluded.length
 		WHERE sessions.user_id = excluded.user_id`,
 		normalized.ID,
 		normalized.UserID,
 		normalized.Length,
-		normalized.Summary.Content(),
 	)
 	if err != nil {
 		return fmt.Errorf("save session %s: %w", normalized.ID, err)
@@ -129,7 +127,7 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (domainse
 
 	row := ConnFromContext(ctx, r.db).QueryRowContext(
 		ctx,
-		`SELECT id, user_id, length, summary FROM sessions WHERE id = ?`,
+		`SELECT id, user_id, length FROM sessions WHERE id = ?`,
 		sessionID,
 	)
 	return scanSession(row)
@@ -138,7 +136,7 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (domainse
 func (r *SessionRepository) getActiveByUserID(ctx context.Context, userID string) (domainsession.Session, error) {
 	row := ConnFromContext(ctx, r.db).QueryRowContext(
 		ctx,
-		`SELECT s.id, s.user_id, s.length, s.summary
+		`SELECT s.id, s.user_id, s.length
 		FROM active_sessions AS a
 		JOIN sessions AS s ON s.id = a.session_id
 		WHERE a.user_id = ?`,
@@ -155,11 +153,10 @@ func (r *SessionRepository) insertSession(ctx context.Context, userID string) (d
 
 	if _, err := ConnFromContext(ctx, r.db).ExecContext(
 		ctx,
-		`INSERT INTO sessions(id, user_id, length, summary) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO sessions(id, user_id, length) VALUES (?, ?, ?)`,
 		session.ID,
 		session.UserID,
 		session.Length,
-		session.Summary.Content(),
 	); err != nil {
 		return domainsession.Session{}, fmt.Errorf("insert session %s: %w", session.ID, err)
 	}
@@ -206,7 +203,7 @@ func (r *SessionRepository) withinTx(ctx context.Context, fn func(ctx context.Co
 
 func scanSession(row *sql.Row) (domainsession.Session, error) {
 	var record sessionRecord
-	if err := row.Scan(&record.ID, &record.UserID, &record.Length, &record.Summary); err != nil {
+	if err := row.Scan(&record.ID, &record.UserID, &record.Length); err != nil {
 		return domainsession.Session{}, err
 	}
 
@@ -214,7 +211,6 @@ func scanSession(row *sql.Row) (domainsession.Session, error) {
 		record.ID,
 		record.UserID,
 		record.Length,
-		domainsession.NewSummary(record.Summary),
 	)
 	if err != nil {
 		return domainsession.Session{}, fmt.Errorf("restore session %s: %w", record.ID, err)

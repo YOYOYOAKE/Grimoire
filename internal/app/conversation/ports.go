@@ -22,7 +22,6 @@ type TxRunner interface {
 
 type ConversationInput struct {
 	SessionID string
-	Summary   domainsession.Summary
 	Messages  []domainsession.Message
 }
 
@@ -32,7 +31,6 @@ type CreateDrawingTask struct {
 
 type ConversationOutput struct {
 	Reply             string
-	Summary           domainsession.Summary
 	CreateDrawingTask *CreateDrawingTask
 }
 

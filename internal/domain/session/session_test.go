@@ -14,13 +14,10 @@ func TestNewSessionStartsEmpty(t *testing.T) {
 	if s.Length != 0 {
 		t.Fatalf("unexpected length: %d", s.Length)
 	}
-	if !s.Summary.IsEmpty() {
-		t.Fatalf("expected empty summary, got %q", s.Summary.Content())
-	}
 }
 
 func TestRestoreRejectsNegativeLength(t *testing.T) {
-	if _, err := Restore("session-1", "user-1", -1, EmptySummary()); err == nil {
+	if _, err := Restore("session-1", "user-1", -1); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -77,13 +74,5 @@ func TestRecordMessageRejectsInvalidMessage(t *testing.T) {
 func TestNewMessageRejectsInvalidRole(t *testing.T) {
 	if _, err := NewMessage("message-1", "session-1", MessageRole("system"), "hello", time.Unix(1, 0)); err == nil {
 		t.Fatal("expected error")
-	}
-}
-
-func TestSummaryNormalizesBlankContent(t *testing.T) {
-	summary := NewSummary("   ")
-
-	if !summary.IsEmpty() {
-		t.Fatalf("expected blank summary to normalize to empty, got %q", summary.Content())
 	}
 }

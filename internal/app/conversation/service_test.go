@@ -95,7 +95,7 @@ func (s *conversationModelStub) Converse(_ context.Context, input ConversationIn
 }
 
 func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
-	latestSession := mustSession(t, "session-1", "user-1", 1, domainsession.NewSummary(`{"topic":"moon"}`))
+	latestSession := mustSession(t, "session-1", "user-1", 1)
 	recentMessage := mustMessage(t, "msg-1", "session-1", domainsession.MessageRoleUser, "hello", time.Unix(1, 0).UTC())
 	sessions := &conversationSessionRepositoryStub{
 		getSessions: []domainsession.Session{latestSession, latestSession},
@@ -106,8 +106,7 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	txRunner := &conversationTxRunnerStub{}
 	model := &conversationModelStub{
 		output: ConversationOutput{
-			Reply:   "  hi there  ",
-			Summary: domainsession.NewSummary(` {"topic":"moon","step":"confirmed"} `),
+			Reply: "  hi there  ",
 		},
 	}
 	now := func() time.Time { return time.Unix(2, 0).UTC() }
@@ -132,9 +131,6 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	if messages.gotLimit != 15 {
 		t.Fatalf("unexpected recent limit: %d", messages.gotLimit)
 	}
-	if model.input.Summary.Content() != `{"topic":"moon"}` {
-		t.Fatalf("unexpected model summary: %q", model.input.Summary.Content())
-	}
 	if len(model.input.Messages) != 1 || model.input.Messages[0].ID != "msg-1" {
 		t.Fatalf("unexpected model messages: %#v", model.input.Messages)
 	}
@@ -143,9 +139,6 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	}
 	if result.CreateDrawingTask != nil {
 		t.Fatalf("expected no create drawing task, got %#v", result.CreateDrawingTask)
-	}
-	if result.Summary.Content() != `{"topic":"moon","step":"confirmed"}` {
-		t.Fatalf("unexpected summary: %q", result.Summary.Content())
 	}
 	if len(messages.appended) != 1 {
 		t.Fatalf("expected one appended message, got %d", len(messages.appended))
@@ -159,22 +152,18 @@ func TestConverseLoadsRecentMessagesCallsModelAndPersistsReply(t *testing.T) {
 	if sessions.savedSession.Length != 2 {
 		t.Fatalf("expected saved session length 2, got %d", sessions.savedSession.Length)
 	}
-	if sessions.savedSession.Summary.Content() != `{"topic":"moon","step":"confirmed"}` {
-		t.Fatalf("unexpected saved summary: %q", sessions.savedSession.Summary.Content())
-	}
 }
 
 func TestConverseReloadsLatestSessionBeforePersisting(t *testing.T) {
-	staleSession := mustSession(t, "session-1", "user-1", 1, domainsession.NewSummary(`{"topic":"stale"}`))
-	latestSession := mustSession(t, "session-1", "user-1", 2, domainsession.NewSummary(`{"topic":"fresh"}`))
+	staleSession := mustSession(t, "session-1", "user-1", 1)
+	latestSession := mustSession(t, "session-1", "user-1", 2)
 	sessions := &conversationSessionRepositoryStub{
 		getSessions: []domainsession.Session{staleSession, latestSession},
 	}
 	service := NewService(
 		&conversationModelStub{
 			output: ConversationOutput{
-				Reply:   "reply",
-				Summary: domainsession.NewSummary(`{"topic":"next"}`),
+				Reply: "reply",
 			},
 		},
 		sessions,
@@ -195,8 +184,8 @@ func TestConverseReloadsLatestSessionBeforePersisting(t *testing.T) {
 	}
 }
 
-func TestConversePersistsSummaryWithoutAssistantReplyWhenCreatingTask(t *testing.T) {
-	latestSession := mustSession(t, "session-1", "user-1", 1, domainsession.NewSummary(`{"topic":"moon"}`))
+func TestConverseSkipsAssistantReplyWhenCreatingTask(t *testing.T) {
+	latestSession := mustSession(t, "session-1", "user-1", 1)
 	sessions := &conversationSessionRepositoryStub{
 		getSessions: []domainsession.Session{latestSession, latestSession},
 	}
@@ -204,7 +193,6 @@ func TestConversePersistsSummaryWithoutAssistantReplyWhenCreatingTask(t *testing
 	txRunner := &conversationTxRunnerStub{}
 	model := &conversationModelStub{
 		output: ConversationOutput{
-			Summary:           domainsession.NewSummary(`{"topic":"moon","step":"ready"}`),
 			CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
 		},
 	}
@@ -226,13 +214,10 @@ func TestConversePersistsSummaryWithoutAssistantReplyWhenCreatingTask(t *testing
 	if sessions.savedSession.Length != 1 {
 		t.Fatalf("expected session length unchanged, got %d", sessions.savedSession.Length)
 	}
-	if sessions.savedSession.Summary.Content() != `{"topic":"moon","step":"ready"}` {
-		t.Fatalf("unexpected saved summary: %q", sessions.savedSession.Summary.Content())
-	}
 }
 
 func TestConverseReturnsModelErrorWithoutOpeningTransaction(t *testing.T) {
-	session := mustSession(t, "session-1", "user-1", 0, domainsession.EmptySummary())
+	session := mustSession(t, "session-1", "user-1", 0)
 	modelErr := errors.New("llm unavailable")
 	txRunner := &conversationTxRunnerStub{}
 	service := NewService(
@@ -256,12 +241,11 @@ func TestConverseReturnsModelErrorWithoutOpeningTransaction(t *testing.T) {
 }
 
 func TestConverseRejectsReplyAndCreateDrawingTaskTogether(t *testing.T) {
-	session := mustSession(t, "session-1", "user-1", 0, domainsession.EmptySummary())
+	session := mustSession(t, "session-1", "user-1", 0)
 	service := NewService(
 		&conversationModelStub{
 			output: ConversationOutput{
 				Reply:             "reply",
-				Summary:           domainsession.NewSummary(`{"topic":"moon"}`),
 				CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
 			},
 		},
@@ -313,8 +297,7 @@ func TestConverseRollsBackAssistantReplyWhenSaveFails(t *testing.T) {
 	service := NewService(
 		&conversationModelStub{
 			output: ConversationOutput{
-				Reply:   "reply",
-				Summary: domainsession.NewSummary(`{"topic":"moon"}`),
+				Reply: "reply",
 			},
 		},
 		&failingConversationSessionRepository{
@@ -340,9 +323,6 @@ func TestConverseRollsBackAssistantReplyWhenSaveFails(t *testing.T) {
 	}
 	if reloaded.Length != 1 {
 		t.Fatalf("expected session length unchanged after rollback, got %d", reloaded.Length)
-	}
-	if !reloaded.Summary.IsEmpty() {
-		t.Fatalf("expected summary unchanged after rollback, got %q", reloaded.Summary.Content())
 	}
 
 	recent, err := messageRepo.ListRecent(ctx, session.ID, 10)
@@ -373,12 +353,11 @@ func (r *failingConversationSessionRepository) Save(context.Context, domainsessi
 func TestConverseLogsConversationLifecycle(t *testing.T) {
 	var logBuffer strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logBuffer, nil))
-	latestSession := mustSession(t, "session-1", "user-1", 1, domainsession.NewSummary(`{"topic":"moon"}`))
+	latestSession := mustSession(t, "session-1", "user-1", 1)
 	recentMessage := mustMessage(t, "msg-1", "session-1", domainsession.MessageRoleUser, "开始绘图", time.Unix(1, 0).UTC())
 	service := NewService(
 		&conversationModelStub{
 			output: ConversationOutput{
-				Summary:           domainsession.NewSummary(`{"topic":"moon","ready":true}`),
 				CreateDrawingTask: &CreateDrawingTask{Request: "draw a moonlit girl"},
 			},
 		},
@@ -408,16 +387,11 @@ func TestConverseLogsConversationLifecycle(t *testing.T) {
 			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
 		}
 	}
-	for _, unexpected := range []string{"preference_shape=", "preference_artists="} {
-		if strings.Contains(logOutput, unexpected) {
-			t.Fatalf("did not expect %q in logs, got %s", unexpected, logOutput)
-		}
-	}
 }
 
-func mustSession(t *testing.T, id string, userID string, length int, summary domainsession.Summary) domainsession.Session {
+func mustSession(t *testing.T, id string, userID string, length int) domainsession.Session {
 	t.Helper()
-	session, err := domainsession.Restore(id, userID, length, summary)
+	session, err := domainsession.Restore(id, userID, length)
 	if err != nil {
 		t.Fatalf("restore session: %v", err)
 	}

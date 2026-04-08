@@ -14,7 +14,6 @@ import (
 
 	"grimoire/internal/app/conversation"
 	"grimoire/internal/config"
-	domainsession "grimoire/internal/domain/session"
 	"grimoire/internal/platform/httpclient"
 )
 
@@ -30,7 +29,6 @@ type ConversationClient struct {
 }
 
 type conversationRequestPayload struct {
-	Summary  json.RawMessage              `json:"summary"`
 	Messages []conversationMessagePayload `json:"messages"`
 }
 
@@ -131,11 +129,6 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 }
 
 func buildConversationPayload(input conversation.ConversationInput) (conversationRequestPayload, error) {
-	summaryRaw := []byte(input.Summary.Content())
-	if !json.Valid(summaryRaw) || !isJSONObject(summaryRaw) {
-		return conversationRequestPayload{}, fmt.Errorf("conversation summary must be json object")
-	}
-
 	messages := make([]conversationMessagePayload, 0, len(input.Messages))
 	for _, message := range input.Messages {
 		if err := message.Validate(); err != nil {
@@ -148,7 +141,6 @@ func buildConversationPayload(input conversation.ConversationInput) (conversatio
 	}
 
 	return conversationRequestPayload{
-		Summary:  json.RawMessage(summaryRaw),
 		Messages: messages,
 	}, nil
 }
@@ -167,12 +159,8 @@ func createDrawingTaskTool() map[string]any {
 						"minLength":   1,
 						"description": "The final Chinese drawing request to hand to the drawing pipeline.",
 					},
-					"summary": map[string]any{
-						"type":        "object",
-						"description": "Updated hidden conversation summary as a JSON object.",
-					},
 				},
-				"required":             []string{"request", "summary"},
+				"required":             []string{"request"},
 				"additionalProperties": false,
 			},
 		},
@@ -181,40 +169,24 @@ func createDrawingTaskTool() map[string]any {
 
 func parseConversationOutput(raw string) (conversation.ConversationOutput, error) {
 	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```text")
+	raw = strings.TrimPrefix(raw, "```markdown")
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
-	raw = strings.TrimSpace(raw)
-
-	var parsed struct {
-		Reply   string          `json:"reply"`
-		Summary json.RawMessage `json:"summary"`
-	}
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return conversation.ConversationOutput{}, fmt.Errorf("parse conversation json: %w", err)
-	}
-
-	reply := strings.TrimSpace(parsed.Reply)
+	reply := strings.TrimSpace(raw)
 	if reply == "" {
 		return conversation.ConversationOutput{}, fmt.Errorf("conversation response missing reply")
 	}
 
-	summaryContent, err := normalizeConversationSummary(parsed.Summary)
-	if err != nil {
-		return conversation.ConversationOutput{}, err
-	}
-
 	return conversation.ConversationOutput{
-		Reply:   reply,
-		Summary: domainsession.NewSummary(summaryContent),
+		Reply: reply,
 	}, nil
 }
 
 func parseCreateDrawingTaskOutput(raw string) (conversation.ConversationOutput, error) {
 	raw = strings.TrimSpace(raw)
 	var parsed struct {
-		Request string          `json:"request"`
-		Summary json.RawMessage `json:"summary"`
+		Request string `json:"request"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 		return conversation.ConversationOutput{}, fmt.Errorf("parse create drawing task json: %w", err)
@@ -224,41 +196,12 @@ func parseCreateDrawingTaskOutput(raw string) (conversation.ConversationOutput, 
 	if request == "" {
 		return conversation.ConversationOutput{}, fmt.Errorf("create drawing task response missing request")
 	}
-	summaryContent, err := normalizeConversationSummary(parsed.Summary)
-	if err != nil {
-		return conversation.ConversationOutput{}, err
-	}
 
 	return conversation.ConversationOutput{
-		Summary: domainsession.NewSummary(summaryContent),
 		CreateDrawingTask: &conversation.CreateDrawingTask{
 			Request: request,
 		},
 	}, nil
-}
-
-func normalizeConversationSummary(raw json.RawMessage) (string, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
-		return "", fmt.Errorf("conversation response missing summary")
-	}
-
-	if raw[0] == '"' {
-		var summary string
-		if err := json.Unmarshal(raw, &summary); err != nil {
-			return "", fmt.Errorf("conversation summary must be string or json object: %w", err)
-		}
-		summary = strings.TrimSpace(summary)
-		raw = []byte(summary)
-	}
-
-	if !json.Valid(raw) {
-		return "", fmt.Errorf("conversation summary must be valid json object")
-	}
-	if !isJSONObject(raw) {
-		return "", fmt.Errorf("conversation summary must be json object")
-	}
-	return string(raw), nil
 }
 
 func isJSONObject(raw []byte) bool {
@@ -460,17 +403,7 @@ func isOpenAIEnvelope(payload []byte) bool {
 }
 
 func shouldAppendRawConversationPayload(payload []byte) bool {
-	if !json.Valid(payload) {
-		return true
-	}
-
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &parsed); err != nil {
-		return false
-	}
-	_, hasReply := parsed["reply"]
-	_, hasSummary := parsed["summary"]
-	return hasReply || hasSummary
+	return !isOpenAIEnvelope(payload)
 }
 
 func (c *ConversationClient) logFailure(message string, err error, rawResponse string, assistantContent string) {
@@ -503,7 +436,6 @@ func (c *ConversationClient) logRequest(input conversation.ConversationInput, us
 		"base_url_host", baseURLHost(c.cfg.BaseURL),
 		"session_id", strings.TrimSpace(input.SessionID),
 		"recent_message_count", len(input.Messages),
-		"summary", input.Summary.Content(),
 		"messages", input.Messages,
 		"user_payload", userPayload,
 	)
@@ -525,13 +457,11 @@ func (c *ConversationClient) logSuccess(
 		"base_url_host", baseURLHost(c.cfg.BaseURL),
 		"session_id", strings.TrimSpace(input.SessionID),
 		"recent_message_count", len(input.Messages),
-		"summary", input.Summary.Content(),
 		"messages", input.Messages,
 		"user_payload", userPayload,
 		"raw_response", rawResponse,
 		"response_mode", responseMode,
 		"reply", output.Reply,
-		"summary_after", output.Summary.Content(),
 	}
 	if output.CreateDrawingTask != nil {
 		attrs = append(

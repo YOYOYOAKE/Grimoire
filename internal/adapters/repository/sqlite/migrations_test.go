@@ -15,7 +15,7 @@ func TestMigrateAppliesFullEmbeddedSchemaOnlyOnce(t *testing.T) {
 		t.Fatalf("second migrate: %v", err)
 	}
 
-	if got := countRows(t, db, "schema_migrations"); got != 3 {
+	if got := countRows(t, db, "schema_migrations"); got != 4 {
 		t.Fatalf("unexpected migration count: %d", got)
 	}
 
@@ -29,6 +29,9 @@ func TestMigrateAppliesFullEmbeddedSchemaOnlyOnce(t *testing.T) {
 	}
 	if !indexExists(t, db, "idx_sessions_user_id") {
 		t.Fatal("expected idx_sessions_user_id index to exist after migration")
+	}
+	if columnExists(t, db, "sessions", "summary") {
+		t.Fatal("expected sessions.summary column to be removed after migration")
 	}
 	if columnExists(t, db, "tasks", "prompt") {
 		t.Fatal("expected tasks.prompt column to be removed after migration")
@@ -130,7 +133,7 @@ func TestMigrateUpgradesLegacySingleSessionSchema(t *testing.T) {
 		t.Fatalf("upgrade migrate: %v", err)
 	}
 
-	if got := countRows(t, db, "schema_migrations"); got != 3 {
+	if got := countRows(t, db, "schema_migrations"); got != 4 {
 		t.Fatalf("unexpected migration count after upgrade: %d", got)
 	}
 	if !tableExists(t, db, "active_sessions") {
@@ -157,13 +160,15 @@ func TestMigrateUpgradesLegacySingleSessionSchema(t *testing.T) {
 	if columnExists(t, db, "tasks", "prompt") {
 		t.Fatal("expected tasks.prompt column to be removed after upgrade")
 	}
+	if columnExists(t, db, "sessions", "summary") {
+		t.Fatal("expected sessions.summary column to be removed after upgrade")
+	}
 	if _, err := db.ExecContext(
 		context.Background(),
-		`INSERT INTO sessions(id, user_id, length, summary) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO sessions(id, user_id, length) VALUES (?, ?, ?)`,
 		"session-2",
 		"user-1",
 		0,
-		`{}`,
 	); err != nil {
 		t.Fatalf("expected duplicate user sessions to be allowed after upgrade: %v", err)
 	}

@@ -6,17 +6,16 @@ import (
 )
 
 type Session struct {
-	ID      string
-	UserID  string
-	Length  int
-	Summary Summary
+	ID     string
+	UserID string
+	Length int
 }
 
 func New(id string, userID string) (Session, error) {
-	return Restore(id, userID, 0, EmptySummary())
+	return Restore(id, userID, 0)
 }
 
-func Restore(id string, userID string, length int, summary Summary) (Session, error) {
+func Restore(id string, userID string, length int) (Session, error) {
 	id = strings.TrimSpace(id)
 	userID = strings.TrimSpace(userID)
 
@@ -31,10 +30,9 @@ func Restore(id string, userID string, length int, summary Summary) (Session, er
 	}
 
 	return Session{
-		ID:      id,
-		UserID:  userID,
-		Length:  length,
-		Summary: NewSummary(summary.Content()),
+		ID:     id,
+		UserID: userID,
+		Length: length,
 	}, nil
 }
 
@@ -47,8 +45,4 @@ func (s *Session) RecordMessage(message Message) error {
 	}
 	s.Length++
 	return nil
-}
-
-func (s *Session) UpdateSummary(summary Summary) {
-	s.Summary = NewSummary(summary.Content())
 }

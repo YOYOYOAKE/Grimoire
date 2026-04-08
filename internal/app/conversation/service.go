@@ -69,8 +69,7 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	if sessionID == "" {
 		return ConverseResult{}, fmt.Errorf("session id is required")
 	}
-	session, err := s.sessions.Get(ctx, sessionID)
-	if err != nil {
+	if _, err := s.sessions.Get(ctx, sessionID); err != nil {
 		return ConverseResult{}, err
 	}
 	recentMessages, err := s.messages.ListRecent(ctx, sessionID, s.recentMessageLimit)
@@ -82,13 +81,11 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 		"session_id", sessionID,
 		"recent_message_limit", s.recentMessageLimit,
 		"recent_message_count", len(recentMessages),
-		"summary", session.Summary.Content(),
 		"messages", recentMessages,
 	)
 
 	output, err := s.model.Converse(ctx, ConversationInput{
 		SessionID: sessionID,
-		Summary:   session.Summary,
 		Messages:  recentMessages,
 	})
 	if err != nil {
@@ -96,7 +93,6 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 	}
 
 	reply := strings.TrimSpace(output.Reply)
-	summary := domainsession.NewSummary(output.Summary.Content())
 	var createDrawingTask *CreateDrawingTask
 	if output.CreateDrawingTask != nil {
 		request := strings.TrimSpace(output.CreateDrawingTask.Request)
@@ -115,7 +111,6 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 		"conversation model returned",
 		"session_id", sessionID,
 		"reply", reply,
-		"summary", summary.Content(),
 		"create_drawing_task", createDrawingTask != nil,
 		"request", requestText(createDrawingTask),
 	)
@@ -126,8 +121,6 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 		if err != nil {
 			return err
 		}
-
-		latestSession.UpdateSummary(summary)
 
 		if reply != "" {
 			persistedAssistantMessageID = s.idGenerator()
@@ -161,14 +154,12 @@ func (s *Service) Converse(ctx context.Context, command ConverseCommand) (Conver
 		"session_id", sessionID,
 		"assistant_reply_persisted", reply != "",
 		"assistant_message_id", persistedAssistantMessageID,
-		"summary", summary.Content(),
 		"create_drawing_task", createDrawingTask != nil,
 		"request", requestText(createDrawingTask),
 	)
 
 	return ConverseResult{
 		Reply:             reply,
-		Summary:           summary,
 		CreateDrawingTask: createDrawingTask,
 	}, nil
 }

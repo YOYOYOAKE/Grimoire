@@ -21,7 +21,6 @@ import (
 	taskapp "grimoire/internal/app/task"
 	domaindraw "grimoire/internal/domain/draw"
 	domainpreferences "grimoire/internal/domain/preferences"
-	domainsession "grimoire/internal/domain/session"
 	domaintask "grimoire/internal/domain/task"
 	platformdb "grimoire/internal/platform/db"
 	platformid "grimoire/internal/platform/id"
@@ -289,11 +288,9 @@ func newAcceptanceHarness(t *testing.T) acceptanceHarness {
 	model := &acceptanceConversationModelStub{
 		outputs: []conversationapp.ConversationOutput{
 			{
-				Reply:   "绘制一位月下少女，夜景氛围，纵向构图。",
-				Summary: domainsession.NewSummary(`{"topic":"moon","request_ready":true}`),
+				Reply: "绘制一位月下少女，夜景氛围，纵向构图。",
 			},
 			{
-				Summary: domainsession.NewSummary(`{"topic":"moon","request_ready":true,"started":true}`),
 				CreateDrawingTask: &conversationapp.CreateDrawingTask{
 					Request: "绘制一位月下少女，夜景氛围，纵向构图。",
 				},

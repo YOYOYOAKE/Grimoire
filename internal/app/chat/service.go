@@ -109,7 +109,6 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 		"user_id", userID,
 		"session_id", currentSession.ID,
 		"reply", result.Reply,
-		"summary", result.Summary.Content(),
 		"create_drawing_task", result.CreateDrawingTask != nil,
 		"request", createDrawingTaskRequest(result.CreateDrawingTask),
 	)

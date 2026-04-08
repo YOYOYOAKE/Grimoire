@@ -21,11 +21,6 @@ type AppendMessageCommand struct {
 	CreatedAt time.Time
 }
 
-type UpdateSummaryCommand struct {
-	SessionID string
-	Summary   domainsession.Summary
-}
-
 type ListRecentMessagesCommand struct {
 	SessionID string
 	Limit     int

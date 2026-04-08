@@ -220,7 +220,6 @@ func TestHandleTextCreatesTaskWhenConversationRequestsDrawing(t *testing.T) {
 		&chatSessionServiceStub{session: session},
 		&chatConversationServiceStub{
 			result: conversationapp.ConverseResult{
-				Summary:           domainsession.NewSummary(`{"topic":"moon","step":"draw"}`),
 				CreateDrawingTask: &conversationapp.CreateDrawingTask{Request: "draw a moonlit girl"},
 			},
 		},
@@ -266,7 +265,6 @@ func TestHandleTextReturnsTaskCreateError(t *testing.T) {
 		&chatSessionServiceStub{session: session},
 		&chatConversationServiceStub{
 			result: conversationapp.ConverseResult{
-				Summary:           domainsession.NewSummary(`{"topic":"moon"}`),
 				CreateDrawingTask: &conversationapp.CreateDrawingTask{Request: "draw a moonlit girl"},
 			},
 		},
@@ -295,8 +293,7 @@ func TestHandleTextLogsLifecycle(t *testing.T) {
 		&chatSessionServiceStub{session: session},
 		&chatConversationServiceStub{
 			result: conversationapp.ConverseResult{
-				Reply:   "需要补充一下光线方向。",
-				Summary: domainsession.NewSummary(`{"topic":"moon"}`),
+				Reply: "需要补充一下光线方向。",
 			},
 		},
 		&chatTaskServiceStub{},

@@ -65,30 +65,6 @@ func (s *Service) AppendAssistantMessage(ctx context.Context, command AppendMess
 	return s.appendMessage(ctx, command, domainsession.MessageRoleAssistant)
 }
 
-func (s *Service) UpdateSummary(ctx context.Context, command UpdateSummaryCommand) (domainsession.Session, error) {
-	if s.txRunner == nil {
-		return domainsession.Session{}, ErrTxRunnerRequired
-	}
-
-	var updated domainsession.Session
-	err := s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
-		session, err := s.loadSession(txCtx, command.SessionID)
-		if err != nil {
-			return err
-		}
-		session.UpdateSummary(command.Summary)
-		if err := s.sessions.Save(txCtx, session); err != nil {
-			return err
-		}
-		updated = session
-		return nil
-	})
-	if err != nil {
-		return domainsession.Session{}, err
-	}
-	return updated, nil
-}
-
 func (s *Service) ListRecentMessages(ctx context.Context, command ListRecentMessagesCommand) (RecentMessagesResult, error) {
 	sessionID := strings.TrimSpace(command.SessionID)
 	if sessionID == "" {

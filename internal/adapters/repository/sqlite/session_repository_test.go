@@ -33,9 +33,6 @@ func TestSessionRepositoryGetOrCreateActiveByUserIDCreatesOnce(t *testing.T) {
 	if first.Length != 0 {
 		t.Fatalf("unexpected initial length: %d", first.Length)
 	}
-	if !first.Summary.IsEmpty() {
-		t.Fatalf("expected empty summary, got %q", first.Summary.Content())
-	}
 	if second.ID != first.ID {
 		t.Fatalf("expected existing session id %s, got %s", first.ID, second.ID)
 	}
@@ -47,7 +44,7 @@ func TestSessionRepositoryGetOrCreateActiveByUserIDCreatesOnce(t *testing.T) {
 	}
 }
 
-func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
+func TestSessionRepositorySavePersistsLength(t *testing.T) {
 	db := openMigratedTestDB(t)
 	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
 	createSessionUser(t, db, "user-1")
@@ -69,7 +66,6 @@ func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
 	if err := session.RecordMessage(message); err != nil {
 		t.Fatalf("record message: %v", err)
 	}
-	session.UpdateSummary(domainsession.NewSummary(`{"topic":"castle"}`))
 
 	if err := repository.Save(context.Background(), session); err != nil {
 		t.Fatalf("save session: %v", err)
@@ -85,9 +81,6 @@ func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
 	if got.Length != 1 {
 		t.Fatalf("unexpected length: %d", got.Length)
 	}
-	if got.Summary.Content() != `{"topic":"castle"}` {
-		t.Fatalf("unexpected summary: %q", got.Summary.Content())
-	}
 }
 
 func TestSessionRepositoryGetLoadsSessionByID(t *testing.T) {
@@ -99,7 +92,6 @@ func TestSessionRepositoryGetLoadsSessionByID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get or create session: %v", err)
 	}
-	session.UpdateSummary(domainsession.NewSummary(`{"topic":"moon"}`))
 	if err := repository.Save(context.Background(), session); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
@@ -110,9 +102,6 @@ func TestSessionRepositoryGetLoadsSessionByID(t *testing.T) {
 	}
 	if got.UserID != "user-1" {
 		t.Fatalf("unexpected user id: %s", got.UserID)
-	}
-	if got.Summary.Content() != `{"topic":"moon"}` {
-		t.Fatalf("unexpected summary: %q", got.Summary.Content())
 	}
 }
 
@@ -177,10 +166,9 @@ func TestSessionRepositorySaveRejectsInvalidSession(t *testing.T) {
 	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
 
 	err := repository.Save(context.Background(), domainsession.Session{
-		ID:      "session-1",
-		UserID:  "user-1",
-		Length:  -1,
-		Summary: domainsession.EmptySummary(),
+		ID:     "session-1",
+		UserID: "user-1",
+		Length: -1,
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -203,7 +191,6 @@ func TestSessionRepositorySaveRejectsOwnerChange(t *testing.T) {
 
 	mutated := original
 	mutated.UserID = "user-2"
-	mutated.UpdateSummary(domainsession.NewSummary(`{"topic":"forbidden"}`))
 
 	if err := repository.Save(context.Background(), mutated); err == nil {
 		t.Fatal("expected error")
@@ -215,9 +202,6 @@ func TestSessionRepositorySaveRejectsOwnerChange(t *testing.T) {
 	}
 	if got.UserID != "user-1" {
 		t.Fatalf("unexpected user id after rejected owner change: %s", got.UserID)
-	}
-	if got.Summary.Content() != domainsession.EmptySummary().Content() {
-		t.Fatalf("unexpected summary after rejected owner change: %q", got.Summary.Content())
 	}
 	if got := countRows(t, db, "sessions"); got != 1 {
 		t.Fatalf("expected one session row, got %d", got)
@@ -263,7 +247,6 @@ func TestSessionRepositoryUsesTransactionConnection(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		session.UpdateSummary(domainsession.NewSummary(`{"state":"pending"}`))
 		if err := repository.Save(ctx, session); err != nil {
 			return err
 		}

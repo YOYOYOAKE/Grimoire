@@ -209,30 +209,6 @@ func TestAppendAssistantMessageUsesAssistantRole(t *testing.T) {
 	}
 }
 
-func TestUpdateSummarySavesNormalizedSummary(t *testing.T) {
-	session, err := domainsession.New("session-1", "user-1")
-	if err != nil {
-		t.Fatalf("new session: %v", err)
-	}
-
-	sessions := &sessionRepositoryStub{session: session}
-	service := NewService(sessions, &sessionMessageRepositoryStub{}, &txRunnerStub{})
-
-	updated, err := service.UpdateSummary(context.Background(), UpdateSummaryCommand{
-		SessionID: "session-1",
-		Summary:   domainsession.NewSummary(` {"topic":"moon"} `),
-	})
-	if err != nil {
-		t.Fatalf("update summary: %v", err)
-	}
-	if updated.Summary.Content() != `{"topic":"moon"}` {
-		t.Fatalf("unexpected summary: %q", updated.Summary.Content())
-	}
-	if sessions.savedSession.Summary.Content() != `{"topic":"moon"}` {
-		t.Fatalf("unexpected saved summary: %q", sessions.savedSession.Summary.Content())
-	}
-}
-
 func TestListRecentMessagesReturnsSessionAndMessages(t *testing.T) {
 	session, err := domainsession.New("session-1", "user-1")
 	if err != nil {
@@ -312,18 +288,6 @@ func TestAppendUserMessageRequiresTxRunner(t *testing.T) {
 		MessageID: "msg-1",
 		Content:   "hello",
 		CreatedAt: time.Now().UTC(),
-	})
-	if !errors.Is(err, ErrTxRunnerRequired) {
-		t.Fatalf("expected tx runner required error, got %v", err)
-	}
-}
-
-func TestUpdateSummaryRequiresTxRunner(t *testing.T) {
-	service := NewService(&sessionRepositoryStub{}, &sessionMessageRepositoryStub{}, nil)
-
-	_, err := service.UpdateSummary(context.Background(), UpdateSummaryCommand{
-		SessionID: "session-1",
-		Summary:   domainsession.NewSummary(`{"topic":"moon"}`),
 	})
 	if !errors.Is(err, ErrTxRunnerRequired) {
 		t.Fatalf("expected tx runner required error, got %v", err)

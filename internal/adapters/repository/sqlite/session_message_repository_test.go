@@ -183,11 +183,10 @@ func createTestSessionRecord(t *testing.T, db *sql.DB, sessionID string, userID 
 
 	_, err := db.ExecContext(
 		context.Background(),
-		`INSERT INTO sessions(id, user_id, length, summary) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO sessions(id, user_id, length) VALUES (?, ?, ?)`,
 		sessionID,
 		userID,
 		0,
-		domainsession.EmptySummary().Content(),
 	)
 	if err != nil {
 		t.Fatalf("create session record: %v", err)
