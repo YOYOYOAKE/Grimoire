@@ -30,6 +30,20 @@ func TestParseConversationOutput(t *testing.T) {
 	}
 }
 
+func TestConversationSystemPromptForcesToolCallOnExplicitStart(t *testing.T) {
+	for _, expected := range []string{
+		"如果用户这一轮已经是在明确要求“现在开始绘图”，你必须调用 `create_drawing_task` 工具。",
+		"一旦你调用 `create_drawing_task` 工具，就不要再输出普通 JSON 回复。",
+		"如果你没有调用 `create_drawing_task` 工具，就表示任务还没有开始",
+		"如果你判断用户是在明确要求立即执行，你必须调用 `create_drawing_task` 工具，而不是返回普通 JSON。",
+		"不允许出现“普通 JSON 回复里说已经开始画，但实际上没有调用工具”的情况。",
+	} {
+		if !strings.Contains(conversationSystemPrompt, expected) {
+			t.Fatalf("expected prompt to contain %q", expected)
+		}
+	}
+}
+
 func TestParseConversationOutputRejectsInvalidSummary(t *testing.T) {
 	if _, err := parseConversationOutput(`{"reply":"hi","summary":"not-json"}`); err == nil {
 		t.Fatal("expected error")
