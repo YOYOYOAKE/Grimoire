@@ -132,3 +132,13 @@ func indexExists(t *testing.T, db *sql.DB, index string) bool {
 	}
 	return count == 1
 }
+
+func queryString(t *testing.T, db *sql.DB, query string, args ...any) string {
+	t.Helper()
+
+	var value string
+	if err := db.QueryRowContext(context.Background(), query, args...).Scan(&value); err != nil {
+		t.Fatalf("query string %q: %v", query, err)
+	}
+	return value
+}

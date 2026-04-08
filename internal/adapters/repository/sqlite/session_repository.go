@@ -41,33 +41,55 @@ func (r *SessionRepository) GetOrCreateActiveByUserID(ctx context.Context, userI
 		return domainsession.Session{}, fmt.Errorf("user id is required")
 	}
 
-	session, err := r.getByUserID(ctx, userID)
-	if err == nil {
-		return session, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	var active domainsession.Session
+	err := r.withinTx(ctx, func(txCtx context.Context) error {
+		session, err := r.getActiveByUserID(txCtx, userID)
+		if err == nil {
+			active = session
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
+		created, err := r.insertSession(txCtx, userID)
+		if err != nil {
+			return err
+		}
+		if err := r.upsertActiveSession(txCtx, userID, created.ID); err != nil {
+			return err
+		}
+		active = created
+		return nil
+	})
+	if err != nil {
 		return domainsession.Session{}, err
 	}
+	return active, nil
+}
 
-	session, err = domainsession.New(r.generator.NewString(), userID)
-	if err != nil {
-		return domainsession.Session{}, fmt.Errorf("create session for user %s: %w", userID, err)
+func (r *SessionRepository) CreateNewActiveByUserID(ctx context.Context, userID string) (domainsession.Session, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return domainsession.Session{}, fmt.Errorf("user id is required")
 	}
 
-	_, err = ConnFromContext(ctx, r.db).ExecContext(
-		ctx,
-		`INSERT INTO sessions(id, user_id, length, summary) VALUES (?, ?, ?, ?)
-		ON CONFLICT(user_id) DO NOTHING`,
-		session.ID,
-		session.UserID,
-		session.Length,
-		session.Summary.Content(),
-	)
+	var created domainsession.Session
+	err := r.withinTx(ctx, func(txCtx context.Context) error {
+		session, err := r.insertSession(txCtx, userID)
+		if err != nil {
+			return err
+		}
+		if err := r.upsertActiveSession(txCtx, userID, session.ID); err != nil {
+			return err
+		}
+		created = session
+		return nil
+	})
 	if err != nil {
-		return domainsession.Session{}, fmt.Errorf("ensure active session for user %s: %w", userID, err)
+		return domainsession.Session{}, err
 	}
-
-	return r.getByUserID(ctx, userID)
+	return created, nil
 }
 
 func (r *SessionRepository) Save(ctx context.Context, session domainsession.Session) error {
@@ -113,13 +135,73 @@ func (r *SessionRepository) Get(ctx context.Context, sessionID string) (domainse
 	return scanSession(row)
 }
 
-func (r *SessionRepository) getByUserID(ctx context.Context, userID string) (domainsession.Session, error) {
+func (r *SessionRepository) getActiveByUserID(ctx context.Context, userID string) (domainsession.Session, error) {
 	row := ConnFromContext(ctx, r.db).QueryRowContext(
 		ctx,
-		`SELECT id, user_id, length, summary FROM sessions WHERE user_id = ?`,
+		`SELECT s.id, s.user_id, s.length, s.summary
+		FROM active_sessions AS a
+		JOIN sessions AS s ON s.id = a.session_id
+		WHERE a.user_id = ?`,
 		userID,
 	)
 	return scanSession(row)
+}
+
+func (r *SessionRepository) insertSession(ctx context.Context, userID string) (domainsession.Session, error) {
+	session, err := domainsession.New(r.generator.NewString(), userID)
+	if err != nil {
+		return domainsession.Session{}, fmt.Errorf("create session for user %s: %w", userID, err)
+	}
+
+	if _, err := ConnFromContext(ctx, r.db).ExecContext(
+		ctx,
+		`INSERT INTO sessions(id, user_id, length, summary) VALUES (?, ?, ?, ?)`,
+		session.ID,
+		session.UserID,
+		session.Length,
+		session.Summary.Content(),
+	); err != nil {
+		return domainsession.Session{}, fmt.Errorf("insert session %s: %w", session.ID, err)
+	}
+	return session, nil
+}
+
+func (r *SessionRepository) upsertActiveSession(ctx context.Context, userID string, sessionID string) error {
+	_, err := ConnFromContext(ctx, r.db).ExecContext(
+		ctx,
+		`INSERT INTO active_sessions(user_id, session_id) VALUES (?, ?)
+		ON CONFLICT(user_id) DO UPDATE SET session_id = excluded.session_id`,
+		userID,
+		sessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert active session for user %s: %w", userID, err)
+	}
+	return nil
+}
+
+func (r *SessionRepository) withinTx(ctx context.Context, fn func(ctx context.Context) error) (err error) {
+	if _, ok := txFromContext(ctx); ok {
+		return fn(ctx)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin session repository tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if err = fn(contextWithTx(ctx, tx)); err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit session repository tx: %w", err)
+	}
+	return nil
 }
 
 func scanSession(row *sql.Row) (domainsession.Session, error) {

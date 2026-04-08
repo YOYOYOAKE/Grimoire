@@ -29,6 +29,10 @@ func (sessionRepositoryStub) GetOrCreateActiveByUserID(context.Context, string) 
 	return domainsession.Session{}, nil
 }
 
+func (sessionRepositoryStub) CreateNewActiveByUserID(context.Context, string) (domainsession.Session, error) {
+	return domainsession.Session{}, nil
+}
+
 func (sessionRepositoryStub) Get(context.Context, string) (domainsession.Session, error) {
 	return domainsession.Session{}, nil
 }

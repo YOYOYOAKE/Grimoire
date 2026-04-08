@@ -42,16 +42,19 @@ func TestSessionRepositoryGetOrCreateActiveByUserIDCreatesOnce(t *testing.T) {
 	if got := countRows(t, db, "sessions"); got != 1 {
 		t.Fatalf("expected exactly one session row, got %d", got)
 	}
+	if got := activeSessionID(t, db, "user-1"); got != "session-1" {
+		t.Fatalf("unexpected active session id: %q", got)
+	}
 }
 
 func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
 	db := openMigratedTestDB(t)
-	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-unused"))
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
 	createSessionUser(t, db, "user-1")
 
-	session, err := domainsession.New("session-1", "user-1")
+	session, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
 	if err != nil {
-		t.Fatalf("new session: %v", err)
+		t.Fatalf("get or create session: %v", err)
 	}
 	message, err := domainsession.NewMessage(
 		"message-1",
@@ -72,9 +75,9 @@ func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
 		t.Fatalf("save session: %v", err)
 	}
 
-	got, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
+	got, err := repository.Get(context.Background(), "session-1")
 	if err != nil {
-		t.Fatalf("reload session: %v", err)
+		t.Fatalf("get session: %v", err)
 	}
 	if got.ID != "session-1" {
 		t.Fatalf("unexpected session id: %s", got.ID)
@@ -89,12 +92,12 @@ func TestSessionRepositorySavePersistsLengthAndSummary(t *testing.T) {
 
 func TestSessionRepositoryGetLoadsSessionByID(t *testing.T) {
 	db := openMigratedTestDB(t)
-	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-unused"))
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
 	createSessionUser(t, db, "user-1")
 
-	session, err := domainsession.New("session-1", "user-1")
+	session, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
 	if err != nil {
-		t.Fatalf("new session: %v", err)
+		t.Fatalf("get or create session: %v", err)
 	}
 	session.UpdateSummary(domainsession.NewSummary(`{"topic":"moon"}`))
 	if err := repository.Save(context.Background(), session); err != nil {
@@ -129,6 +132,43 @@ func TestSessionRepositoryGetOrCreateActiveByUserIDDoesNotRequireGeneratorForExi
 	}
 	if got.ID != "session-1" {
 		t.Fatalf("unexpected session id: %s", got.ID)
+	}
+}
+
+func TestSessionRepositoryCreateNewActiveByUserIDSwitchesActiveSession(t *testing.T) {
+	db := openMigratedTestDB(t)
+	createSessionUser(t, db, "user-1")
+
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
+	first, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	repository = NewSessionRepository(db, platformid.NewStaticGenerator("session-2"))
+	second, err := repository.CreateNewActiveByUserID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("create new active session: %v", err)
+	}
+
+	active, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("get active session: %v", err)
+	}
+	if first.ID != "session-1" {
+		t.Fatalf("unexpected first session id: %q", first.ID)
+	}
+	if second.ID != "session-2" {
+		t.Fatalf("unexpected second session id: %q", second.ID)
+	}
+	if active.ID != "session-2" {
+		t.Fatalf("expected active session-2, got %q", active.ID)
+	}
+	if got := countRows(t, db, "sessions"); got != 2 {
+		t.Fatalf("expected two session rows, got %d", got)
+	}
+	if got := activeSessionID(t, db, "user-1"); got != "session-2" {
+		t.Fatalf("unexpected active session id: %q", got)
 	}
 }
 
@@ -169,7 +209,7 @@ func TestSessionRepositorySaveRejectsOwnerChange(t *testing.T) {
 		t.Fatal("expected error")
 	}
 
-	got, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
+	got, err := repository.Get(context.Background(), "session-1")
 	if err != nil {
 		t.Fatalf("reload original session: %v", err)
 	}
@@ -202,6 +242,15 @@ func TestSessionRepositoryGetRejectsBlankSessionID(t *testing.T) {
 	}
 }
 
+func TestSessionRepositoryCreateNewActiveByUserIDRejectsBlankUserID(t *testing.T) {
+	db := openMigratedTestDB(t)
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
+
+	if _, err := repository.CreateNewActiveByUserID(context.Background(), "   "); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
 func TestSessionRepositoryUsesTransactionConnection(t *testing.T) {
 	db := openMigratedTestDB(t)
 	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
@@ -229,6 +278,46 @@ func TestSessionRepositoryUsesTransactionConnection(t *testing.T) {
 	}
 }
 
+func TestSessionRepositoryCreateNewActiveByUserIDRollsBackWithTransaction(t *testing.T) {
+	db := openMigratedTestDB(t)
+	createSessionUser(t, db, "user-1")
+
+	repository := NewSessionRepository(db, platformid.NewStaticGenerator("session-1"))
+	first, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+
+	repository = NewSessionRepository(db, platformid.NewStaticGenerator("session-2"))
+	runner := NewTxRunner(db)
+	expectedErr := errors.New("rollback")
+
+	err = runner.WithinTx(context.Background(), func(ctx context.Context) error {
+		created, err := repository.CreateNewActiveByUserID(ctx, "user-1")
+		if err != nil {
+			return err
+		}
+		if created.ID != "session-2" {
+			t.Fatalf("unexpected created session id in tx: %q", created.ID)
+		}
+		return expectedErr
+	})
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("expected rollback error %v, got %v", expectedErr, err)
+	}
+
+	active, err := repository.GetOrCreateActiveByUserID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("get active session after rollback: %v", err)
+	}
+	if active.ID != first.ID {
+		t.Fatalf("expected active session %q after rollback, got %q", first.ID, active.ID)
+	}
+	if got := countRows(t, db, "sessions"); got != 1 {
+		t.Fatalf("expected one session row after rollback, got %d", got)
+	}
+}
+
 func createSessionUser(t *testing.T, db *sql.DB, telegramID string) {
 	t.Helper()
 
@@ -237,4 +326,18 @@ func createSessionUser(t *testing.T, db *sql.DB, telegramID string) {
 	if err := repository.Create(context.Background(), user); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
+}
+
+func activeSessionID(t *testing.T, db *sql.DB, userID string) string {
+	t.Helper()
+
+	var sessionID string
+	if err := db.QueryRowContext(
+		context.Background(),
+		`SELECT session_id FROM active_sessions WHERE user_id = ?`,
+		userID,
+	).Scan(&sessionID); err != nil {
+		t.Fatalf("query active session id: %v", err)
+	}
+	return sessionID
 }

@@ -10,6 +10,10 @@ type GetOrCreateCommand struct {
 	UserID string
 }
 
+type CreateNewCommand struct {
+	UserID string
+}
+
 type AppendMessageCommand struct {
 	SessionID string
 	MessageID string

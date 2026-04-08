@@ -8,6 +8,7 @@ import (
 
 type SessionRepository interface {
 	GetOrCreateActiveByUserID(ctx context.Context, userID string) (domainsession.Session, error)
+	CreateNewActiveByUserID(ctx context.Context, userID string) (domainsession.Session, error)
 	Get(ctx context.Context, sessionID string) (domainsession.Session, error)
 	Save(ctx context.Context, session domainsession.Session) error
 }

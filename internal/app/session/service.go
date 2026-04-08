@@ -33,6 +33,30 @@ func (s *Service) GetOrCreate(ctx context.Context, command GetOrCreateCommand) (
 	return s.sessions.GetOrCreateActiveByUserID(ctx, userID)
 }
 
+func (s *Service) CreateNew(ctx context.Context, command CreateNewCommand) (domainsession.Session, error) {
+	userID := strings.TrimSpace(command.UserID)
+	if userID == "" {
+		return domainsession.Session{}, fmt.Errorf("user id is required")
+	}
+	if s.txRunner == nil {
+		return domainsession.Session{}, ErrTxRunnerRequired
+	}
+
+	var created domainsession.Session
+	err := s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
+		session, err := s.sessions.CreateNewActiveByUserID(txCtx, userID)
+		if err != nil {
+			return err
+		}
+		created = session
+		return nil
+	})
+	if err != nil {
+		return domainsession.Session{}, err
+	}
+	return created, nil
+}
+
 func (s *Service) AppendUserMessage(ctx context.Context, command AppendMessageCommand) (AppendMessageResult, error) {
 	return s.appendMessage(ctx, command, domainsession.MessageRoleUser)
 }

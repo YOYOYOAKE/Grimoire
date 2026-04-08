@@ -13,9 +13,11 @@ type sessionRepositoryStub struct {
 	session      domainsession.Session
 	getErr       error
 	saveErr      error
+	createNewErr error
 	gotUserID    string
 	gotSessionID string
 	savedSession domainsession.Session
+	createdNew   domainsession.Session
 }
 
 func (s *sessionRepositoryStub) GetOrCreateActiveByUserID(_ context.Context, userID string) (domainsession.Session, error) {
@@ -33,6 +35,17 @@ func (s *sessionRepositoryStub) Save(_ context.Context, session domainsession.Se
 	s.savedSession = session
 	s.session = session
 	return nil
+}
+
+func (s *sessionRepositoryStub) CreateNewActiveByUserID(_ context.Context, userID string) (domainsession.Session, error) {
+	s.gotUserID = userID
+	if s.createNewErr != nil {
+		return domainsession.Session{}, s.createNewErr
+	}
+	if s.createdNew.ID != "" {
+		return s.createdNew, nil
+	}
+	return s.session, nil
 }
 
 func (s *sessionRepositoryStub) Get(_ context.Context, sessionID string) (domainsession.Session, error) {
@@ -96,6 +109,39 @@ func TestGetOrCreateReturnsActiveSession(t *testing.T) {
 	}
 	if sessions.gotUserID != "user-1" {
 		t.Fatalf("expected trimmed user id, got %q", sessions.gotUserID)
+	}
+}
+
+func TestCreateNewReturnsFreshActiveSession(t *testing.T) {
+	session, err := domainsession.New("session-2", "user-1")
+	if err != nil {
+		t.Fatalf("new session: %v", err)
+	}
+
+	sessions := &sessionRepositoryStub{createdNew: session}
+	txRunner := &txRunnerStub{}
+	service := NewService(sessions, &sessionMessageRepositoryStub{}, txRunner)
+
+	got, err := service.CreateNew(context.Background(), CreateNewCommand{UserID: " user-1 "})
+	if err != nil {
+		t.Fatalf("create new session: %v", err)
+	}
+	if txRunner.calls != 1 {
+		t.Fatalf("expected one transaction, got %d", txRunner.calls)
+	}
+	if got.ID != "session-2" {
+		t.Fatalf("unexpected session id: %q", got.ID)
+	}
+	if sessions.gotUserID != "user-1" {
+		t.Fatalf("expected trimmed user id, got %q", sessions.gotUserID)
+	}
+}
+
+func TestCreateNewRequiresTxRunner(t *testing.T) {
+	service := NewService(&sessionRepositoryStub{}, &sessionMessageRepositoryStub{}, nil)
+
+	if _, err := service.CreateNew(context.Background(), CreateNewCommand{UserID: "user-1"}); !errors.Is(err, ErrTxRunnerRequired) {
+		t.Fatalf("expected ErrTxRunnerRequired, got %v", err)
 	}
 }
 
