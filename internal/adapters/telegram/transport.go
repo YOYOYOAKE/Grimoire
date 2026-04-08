@@ -122,7 +122,7 @@ func (b *Bot) editMessage(ctx context.Context, chatID int64, messageID int64, te
 	return err
 }
 
-func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) (int64, error) {
+func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte, markup *InlineKeyboardMarkup) (int64, error) {
 	endpoint := fmt.Sprintf("%s/bot%s/sendPhoto", apiBase, b.cfg.Telegram.BotToken)
 	payload := map[string]any{
 		"chat_id": chatID,
@@ -132,6 +132,9 @@ func (b *Bot) sendPhoto(ctx context.Context, chatID int64, replyToMessageID int6
 	}
 	if strings.TrimSpace(caption) != "" {
 		payload["caption"] = caption
+	}
+	if markup != nil {
+		payload["reply_markup"] = markup
 	}
 	req, err := newMultipartPhotoRequest(ctx, endpoint, payload, filename, content)
 	if err != nil {
@@ -204,6 +207,12 @@ func stringifyFieldValue(value any) string {
 		return strconv.FormatInt(typed, 10)
 	case int:
 		return strconv.Itoa(typed)
+	case *InlineKeyboardMarkup:
+		payload, err := json.Marshal(typed)
+		if err != nil {
+			return ""
+		}
+		return string(payload)
 	default:
 		return fmt.Sprint(value)
 	}

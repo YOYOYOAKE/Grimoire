@@ -101,11 +101,19 @@ func (m *requestServiceMock) ResolveDecision(command requestapp.ResolveDecisionC
 }
 
 type taskServiceMock struct {
-	commands []taskapp.CreateCommand
-	stops    []taskapp.StopCommand
-	result   domaintask.Task
-	err      error
-	stopErr  error
+	commands               []taskapp.CreateCommand
+	stops                  []taskapp.StopCommand
+	prompts                []taskapp.GetPromptCommand
+	retryTranslateCommands []taskapp.RetryCommand
+	retryDrawCommands      []taskapp.RetryCommand
+	result                 domaintask.Task
+	err                    error
+	stopErr                error
+	prompt                 string
+	promptSet              bool
+	promptErr              error
+	retryTranslateErr      error
+	retryDrawErr           error
 }
 
 func (m *taskServiceMock) Create(_ context.Context, command taskapp.CreateCommand) (domaintask.Task, error) {
@@ -126,6 +134,39 @@ func (m *taskServiceMock) Stop(_ context.Context, command taskapp.StopCommand) (
 	}
 	if strings.TrimSpace(m.result.ID) == "" {
 		m.result = domaintask.Task{ID: command.TaskID, Status: domaintask.StatusStopped}
+	}
+	return m.result, nil
+}
+
+func (m *taskServiceMock) GetPrompt(_ context.Context, command taskapp.GetPromptCommand) (string, error) {
+	m.prompts = append(m.prompts, command)
+	if m.promptErr != nil {
+		return "", m.promptErr
+	}
+	if !m.promptSet {
+		return "masterpiece, moonlit_girl", nil
+	}
+	return m.prompt, nil
+}
+
+func (m *taskServiceMock) RetryTranslate(_ context.Context, command taskapp.RetryCommand) (domaintask.Task, error) {
+	m.retryTranslateCommands = append(m.retryTranslateCommands, command)
+	if m.retryTranslateErr != nil {
+		return domaintask.Task{}, m.retryTranslateErr
+	}
+	if strings.TrimSpace(m.result.ID) == "" {
+		m.result = domaintask.Task{ID: "task-2"}
+	}
+	return m.result, nil
+}
+
+func (m *taskServiceMock) RetryDraw(_ context.Context, command taskapp.RetryCommand) (domaintask.Task, error) {
+	m.retryDrawCommands = append(m.retryDrawCommands, command)
+	if m.retryDrawErr != nil {
+		return domaintask.Task{}, m.retryDrawErr
+	}
+	if strings.TrimSpace(m.result.ID) == "" {
+		m.result = domaintask.Task{ID: "task-3"}
 	}
 	return m.result, nil
 }
@@ -430,6 +471,25 @@ func TestEditProgressTextIncludesStopButton(t *testing.T) {
 	}
 }
 
+func TestSendResultPhotoMessageIncludesResultButtons(t *testing.T) {
+	bot, _, _, _, _, _, _, buffer := newTestBot(t)
+
+	if _, err := bot.SendResultPhotoMessage(context.Background(), 100, 20, "task.png", "", []byte("png"), "task-1"); err != nil {
+		t.Fatalf("send result photo: %v", err)
+	}
+
+	logOutput := buffer.String()
+	for _, expected := range []string{
+		`task:prompt:task-1`,
+		`task:retry:translate:task-1`,
+		`task:retry:draw:task-1`,
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in output, got %s", expected, logOutput)
+		}
+	}
+}
+
 func TestDeleteMessageUsesDeleteMessageEndpoint(t *testing.T) {
 	bot, _, _, _, _, _, _, buffer := newTestBot(t)
 
@@ -622,7 +682,7 @@ func TestHandleStopTaskCallbackStopsTaskAndEditsProgressMessage(t *testing.T) {
 		Data: "task:stop:task-1",
 	})
 
-	if len(taskService.stops) != 1 || taskService.stops[0].TaskID != "task-1" {
+	if len(taskService.stops) != 1 || taskService.stops[0].TaskID != "task-1" || taskService.stops[0].UserID != "1" {
 		t.Fatalf("unexpected stop commands: %#v", taskService.stops)
 	}
 	logOutput := buffer.String()
@@ -650,5 +710,153 @@ func TestHandleStopTaskCallbackReportsFailure(t *testing.T) {
 
 	if !strings.Contains(buffer.String(), `"text":"停止任务失败"`) {
 		t.Fatalf("expected stop failure callback response, got %s", buffer.String())
+	}
+}
+
+func TestHandleTaskPromptCallbackSendsPromptMessage(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	taskService.prompt = "masterpiece, moonlit_girl"
+	taskService.promptSet = true
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-prompt",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 34,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:prompt:task-1",
+	})
+
+	if len(taskService.prompts) != 1 || taskService.prompts[0].TaskID != "task-1" || taskService.prompts[0].UserID != "1" {
+		t.Fatalf("unexpected prompt calls: %#v", taskService.prompts)
+	}
+	if !strings.Contains(buffer.String(), `Prompt`) || !strings.Contains(buffer.String(), `masterpiece, moonlit_girl`) {
+		t.Fatalf("expected prompt message in output, got %s", buffer.String())
+	}
+}
+
+func TestHandleRetryTranslateCallbackCreatesRetryTask(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-retry-translate",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 35,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:retry:translate:task-1",
+	})
+
+	if len(taskService.retryTranslateCommands) != 1 || taskService.retryTranslateCommands[0].TaskID != "task-1" || taskService.retryTranslateCommands[0].UserID != "1" {
+		t.Fatalf("unexpected retry translate commands: %#v", taskService.retryTranslateCommands)
+	}
+	if len(taskService.retryDrawCommands) != 0 {
+		t.Fatalf("expected no retry draw commands, got %#v", taskService.retryDrawCommands)
+	}
+	if !strings.Contains(buffer.String(), `"text":"已重新翻译并开始绘图"`) {
+		t.Fatalf("expected retry translate acknowledgement, got %s", buffer.String())
+	}
+}
+
+func TestHandleRetryDrawCallbackCreatesRetryTask(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-retry-draw",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 36,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:retry:draw:task-1",
+	})
+
+	if len(taskService.retryDrawCommands) != 1 || taskService.retryDrawCommands[0].TaskID != "task-1" || taskService.retryDrawCommands[0].UserID != "1" {
+		t.Fatalf("unexpected retry draw commands: %#v", taskService.retryDrawCommands)
+	}
+	if len(taskService.retryTranslateCommands) != 0 {
+		t.Fatalf("expected no retry translate commands, got %#v", taskService.retryTranslateCommands)
+	}
+	if !strings.Contains(buffer.String(), `"text":"已开始重新绘图"`) {
+		t.Fatalf("expected retry draw acknowledgement, got %s", buffer.String())
+	}
+}
+
+func TestHandleTaskPromptCallbackReportsFailure(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	taskService.promptErr = errors.New("boom")
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-prompt-fail",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 37,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:prompt:task-1",
+	})
+
+	if !strings.Contains(buffer.String(), `"text":"查看 prompt 失败"`) {
+		t.Fatalf("expected prompt failure callback response, got %s", buffer.String())
+	}
+}
+
+func TestHandleTaskPromptCallbackReportsEmptyPrompt(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	taskService.promptSet = true
+	taskService.prompt = "   "
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-prompt-empty",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 38,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:prompt:task-1",
+	})
+
+	if !strings.Contains(buffer.String(), `"text":"当前任务没有 prompt"`) {
+		t.Fatalf("expected empty prompt callback response, got %s", buffer.String())
+	}
+}
+
+func TestHandleRetryTranslateCallbackReportsFailure(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	taskService.retryTranslateErr = errors.New("boom")
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-retry-translate-fail",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 39,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:retry:translate:task-1",
+	})
+
+	if !strings.Contains(buffer.String(), `"text":"重新翻译失败"`) {
+		t.Fatalf("expected retry translate failure response, got %s", buffer.String())
+	}
+}
+
+func TestHandleRetryDrawCallbackReportsFailure(t *testing.T) {
+	bot, _, _, _, taskService, _, _, buffer := newTestBot(t)
+	taskService.retryDrawErr = errors.New("boom")
+
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-retry-draw-fail",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 40,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "task:retry:draw:task-1",
+	})
+
+	if !strings.Contains(buffer.String(), `"text":"重新绘图失败"`) {
+		t.Fatalf("expected retry draw failure response, got %s", buffer.String())
 	}
 }

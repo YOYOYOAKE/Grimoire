@@ -82,6 +82,7 @@ type notifierStub struct {
 	editedOptions []MessageOptions
 	deletedIDs    []string
 	sentImagePath string
+	sentImageOpts []MessageOptions
 	callSendImage int
 }
 
@@ -103,9 +104,10 @@ func (s *notifierStub) EditText(_ context.Context, _ string, _ string, text stri
 	return s.editTextErr
 }
 
-func (s *notifierStub) SendImage(_ context.Context, _ string, path string, _ string, _ MessageOptions) (string, error) {
+func (s *notifierStub) SendImage(_ context.Context, _ string, path string, _ string, options MessageOptions) (string, error) {
 	s.callSendImage++
 	s.sentImagePath = path
+	s.sentImageOpts = append(s.sentImageOpts, options)
 	if s.sendImageErr != nil {
 		return "", s.sendImageErr
 	}
@@ -159,6 +161,9 @@ func TestRunSuccessPathPersistsImageAndMessages(t *testing.T) {
 	}
 	if notifier.callSendImage != 1 || notifier.sentImagePath != "data/images/user-1/task-1.jpg" {
 		t.Fatalf("unexpected send image call: %#v", notifier)
+	}
+	if len(notifier.sentImageOpts) != 1 || notifier.sentImageOpts[0].TaskID != "task-1" || notifier.sentImageOpts[0].Variant != MessageVariantResult {
+		t.Fatalf("unexpected send image options: %#v", notifier.sentImageOpts)
 	}
 	if len(notifier.sentTexts) != 1 || notifier.sentTexts[0] != "已入队" {
 		t.Fatalf("unexpected sent texts: %#v", notifier.sentTexts)

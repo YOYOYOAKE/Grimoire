@@ -184,7 +184,10 @@ func (s *Service) Run(ctx context.Context, command RunCommand) error {
 		return nil
 	}
 
-	resultMessageID, err := s.notifier.SendImage(ctx, task.UserID, imagePath, "", MessageOptions{})
+	resultMessageID, err := s.notifier.SendImage(ctx, task.UserID, imagePath, "", MessageOptions{
+		TaskID:  task.ID,
+		Variant: MessageVariantResult,
+	})
 	if err != nil {
 		return s.failTask(ctx, task.ID, "SEND_RESULT_FAILED", "notifying", err)
 	}

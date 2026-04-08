@@ -20,7 +20,12 @@ const (
 	cbClearArtists        = "img:artists:clear"
 )
 
-const taskStopPrefix = "task:stop:"
+const (
+	taskStopPrefix           = "task:stop:"
+	taskPromptPrefix         = "task:prompt:"
+	taskRetryTranslatePrefix = "task:retry:translate:"
+	taskRetryDrawPrefix      = "task:retry:draw:"
+)
 
 type callbackActionKind string
 
@@ -38,7 +43,10 @@ type callbackAction struct {
 type taskActionKind string
 
 const (
-	taskActionStop taskActionKind = "stop"
+	taskActionStop           taskActionKind = "stop"
+	taskActionPrompt         taskActionKind = "prompt"
+	taskActionRetryTranslate taskActionKind = "retry_translate"
+	taskActionRetryDraw      taskActionKind = "retry_draw"
 )
 
 type taskAction struct {
@@ -84,6 +92,24 @@ func parseTaskAction(data string) (taskAction, bool) {
 			return taskAction{}, false
 		}
 		return taskAction{Kind: taskActionStop, TaskID: taskID}, true
+	case strings.HasPrefix(data, taskPromptPrefix):
+		taskID := strings.TrimSpace(strings.TrimPrefix(data, taskPromptPrefix))
+		if taskID == "" {
+			return taskAction{}, false
+		}
+		return taskAction{Kind: taskActionPrompt, TaskID: taskID}, true
+	case strings.HasPrefix(data, taskRetryTranslatePrefix):
+		taskID := strings.TrimSpace(strings.TrimPrefix(data, taskRetryTranslatePrefix))
+		if taskID == "" {
+			return taskAction{}, false
+		}
+		return taskAction{Kind: taskActionRetryTranslate, TaskID: taskID}, true
+	case strings.HasPrefix(data, taskRetryDrawPrefix):
+		taskID := strings.TrimSpace(strings.TrimPrefix(data, taskRetryDrawPrefix))
+		if taskID == "" {
+			return taskAction{}, false
+		}
+		return taskAction{Kind: taskActionRetryDraw, TaskID: taskID}, true
 	default:
 		return taskAction{}, false
 	}

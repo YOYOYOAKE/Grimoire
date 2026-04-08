@@ -37,6 +37,9 @@ type RequestService interface {
 type TaskService interface {
 	Create(ctx context.Context, command taskapp.CreateCommand) (domaintask.Task, error)
 	Stop(ctx context.Context, command taskapp.StopCommand) (domaintask.Task, error)
+	GetPrompt(ctx context.Context, command taskapp.GetPromptCommand) (string, error)
+	RetryTranslate(ctx context.Context, command taskapp.RetryCommand) (domaintask.Task, error)
+	RetryDraw(ctx context.Context, command taskapp.RetryCommand) (domaintask.Task, error)
 }
 
 type PreferenceService interface {
@@ -150,12 +153,16 @@ func (b *Bot) EditProgressText(ctx context.Context, chatID int64, messageID int6
 }
 
 func (b *Bot) SendPhoto(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) error {
-	_, err := b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content)
+	_, err := b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content, nil)
 	return err
 }
 
 func (b *Bot) SendPhotoMessage(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) (int64, error) {
-	return b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content)
+	return b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content, nil)
+}
+
+func (b *Bot) SendResultPhotoMessage(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte, taskID string) (int64, error) {
+	return b.sendPhoto(ctx, chatID, replyToMessageID, filename, caption, content, resultTaskMarkup(taskID))
 }
 
 func (b *Bot) DeleteMessage(ctx context.Context, chatID int64, messageID int64) error {

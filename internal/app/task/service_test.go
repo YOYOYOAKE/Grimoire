@@ -249,7 +249,7 @@ func TestStopMarksTaskStoppedWithinTransaction(t *testing.T) {
 	txRunner := &taskTxRunnerStub{order: &order}
 	service := NewService(repository, txRunner, nil, func() time.Time { return time.Unix(4, 0).UTC() }, nil)
 
-	task, err := service.Stop(context.Background(), StopCommand{TaskID: " task-1 "})
+	task, err := service.Stop(context.Background(), StopCommand{TaskID: " task-1 ", UserID: " user-1 "})
 	if err != nil {
 		t.Fatalf("stop task: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestStopReturnsExistingStoppedTaskWithoutExtraUpdate(t *testing.T) {
 		nil,
 	)
 
-	task, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1"})
+	task, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatalf("stop task: %v", err)
 	}
@@ -303,9 +303,32 @@ func TestStopReturnsExistingStoppedTaskWithoutExtraUpdate(t *testing.T) {
 func TestStopRequiresTxRunner(t *testing.T) {
 	service := NewService(nil, nil, nil, nil, nil)
 
-	_, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1"})
+	_, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1", UserID: "user-1"})
 	if !errors.Is(err, ErrTxRunnerRequired) {
 		t.Fatalf("expected tx runner required error, got %v", err)
+	}
+}
+
+func TestStopRejectsTaskOwnedByAnotherUser(t *testing.T) {
+	order := []string{}
+	service := NewService(
+		&taskRepositoryStub{
+			storedTask: mustDrawingTaskFixture(t, "task-1", "user-2", "session-1", "draw a moonlit girl"),
+			order:      &order,
+		},
+		&taskTxRunnerStub{order: &order},
+		nil,
+		func() time.Time { return time.Unix(4, 0).UTC() },
+		nil,
+	)
+
+	_, err := service.Stop(context.Background(), StopCommand{TaskID: "task-1", UserID: "user-1"})
+	if !errors.Is(err, ErrTaskAccessDenied) {
+		t.Fatalf("expected task access denied error, got %v", err)
+	}
+	expectedOrder := []string{"tx:start", "repo:get"}
+	if fmt.Sprintf("%v", order) != fmt.Sprintf("%v", expectedOrder) {
+		t.Fatalf("unexpected execution order: got %v want %v", order, expectedOrder)
 	}
 }
 
@@ -321,7 +344,7 @@ func TestRetryTranslateCreatesChildTaskAndClearsPrompt(t *testing.T) {
 	now := func() time.Time { return time.Unix(5, 0).UTC() }
 	service := NewService(repository, txRunner, scheduler, now, func() string { return "task-2" })
 
-	task, err := service.RetryTranslate(context.Background(), RetryCommand{TaskID: " task-1 "})
+	task, err := service.RetryTranslate(context.Background(), RetryCommand{TaskID: " task-1 ", UserID: " user-1 "})
 	if err != nil {
 		t.Fatalf("retry translate: %v", err)
 	}
@@ -363,7 +386,7 @@ func TestRetryDrawCreatesChildTaskAndReusesPrompt(t *testing.T) {
 		func() string { return "task-2" },
 	)
 
-	task, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1"})
+	task, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatalf("retry draw: %v", err)
 	}
@@ -398,7 +421,7 @@ func TestRetryDrawReturnsPersistedTaskWhenSchedulerFails(t *testing.T) {
 		func() string { return "task-2" },
 	)
 
-	task, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1"})
+	task, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
 	if !errors.Is(err, schedulerErr) {
 		t.Fatalf("expected scheduler error, got %v", err)
 	}
@@ -422,9 +445,28 @@ func TestRetryDrawRejectsSourceWithoutPrompt(t *testing.T) {
 	scheduler := &schedulerStub{}
 	service := NewService(repository, &taskTxRunnerStub{}, scheduler, nil, func() string { return "task-2" })
 
-	_, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1"})
+	_, err := service.RetryDraw(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
 	if err == nil {
 		t.Fatal("expected error")
+	}
+	if repository.created.ID != "" {
+		t.Fatalf("expected no retry task to be created, got %#v", repository.created)
+	}
+	if scheduler.taskID != "" {
+		t.Fatalf("expected no enqueue, got %q", scheduler.taskID)
+	}
+}
+
+func TestRetryTranslateRejectsTaskOwnedByAnotherUser(t *testing.T) {
+	repository := &taskRepositoryStub{
+		storedTask: mustDrawingTaskFixture(t, "task-1", "user-2", "session-1", "draw a moonlit girl"),
+	}
+	scheduler := &schedulerStub{}
+	service := NewService(repository, &taskTxRunnerStub{}, scheduler, nil, func() string { return "task-2" })
+
+	_, err := service.RetryTranslate(context.Background(), RetryCommand{TaskID: "task-1", UserID: "user-1"})
+	if !errors.Is(err, ErrTaskAccessDenied) {
+		t.Fatalf("expected task access denied error, got %v", err)
 	}
 	if repository.created.ID != "" {
 		t.Fatalf("expected no retry task to be created, got %#v", repository.created)
@@ -476,12 +518,32 @@ func TestGetPromptReturnsPrompt(t *testing.T) {
 		nil,
 	)
 
-	prompt, err := service.GetPrompt(context.Background(), "task-1")
+	prompt, err := service.GetPrompt(context.Background(), GetPromptCommand{TaskID: "task-1", UserID: "user-1"})
 	if err != nil {
 		t.Fatalf("get prompt: %v", err)
 	}
 	if prompt != "masterpiece, moonlit_girl" {
 		t.Fatalf("unexpected prompt: %q", prompt)
+	}
+}
+
+func TestGetPromptRejectsTaskOwnedByAnotherUser(t *testing.T) {
+	taskFixture := mustTaskFixture(t, "task-1", "user-2", "session-1", "draw a moonlit girl", time.Unix(1, 0).UTC())
+	if err := taskFixture.SetPrompt("masterpiece, moonlit_girl"); err != nil {
+		t.Fatalf("set prompt: %v", err)
+	}
+
+	service := NewService(
+		&taskRepositoryStub{storedTask: taskFixture},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+
+	_, err := service.GetPrompt(context.Background(), GetPromptCommand{TaskID: "task-1", UserID: "user-1"})
+	if !errors.Is(err, ErrTaskAccessDenied) {
+		t.Fatalf("expected task access denied error, got %v", err)
 	}
 }
 

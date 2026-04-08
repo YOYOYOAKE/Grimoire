@@ -66,6 +66,24 @@ func TestParseTaskAction(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:   "task prompt",
+			input:  "task:prompt:task-1",
+			want:   taskAction{Kind: taskActionPrompt, TaskID: "task-1"},
+			wantOK: true,
+		},
+		{
+			name:   "retry translate",
+			input:  "task:retry:translate:task-1",
+			want:   taskAction{Kind: taskActionRetryTranslate, TaskID: "task-1"},
+			wantOK: true,
+		},
+		{
+			name:   "retry draw",
+			input:  "task:retry:draw:task-1",
+			want:   taskAction{Kind: taskActionRetryDraw, TaskID: "task-1"},
+			wantOK: true,
+		},
+		{
 			name:   "invalid blank task id",
 			input:  "task:stop:   ",
 			want:   taskAction{},

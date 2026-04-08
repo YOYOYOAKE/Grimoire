@@ -13,6 +13,7 @@ import (
 var (
 	ErrTxRunnerRequired  = errors.New("tx runner is required")
 	ErrSchedulerRequired = errors.New("scheduler is required")
+	ErrTaskAccessDenied  = errors.New("task does not belong to user")
 )
 
 type Service struct {
@@ -67,7 +68,7 @@ func (s *Service) Stop(ctx context.Context, command StopCommand) (domaintask.Tas
 
 	var stopped domaintask.Task
 	err := s.txRunner.WithinTx(ctx, func(txCtx context.Context) error {
-		task, err := s.Get(txCtx, command.TaskID)
+		task, err := s.loadOwnedTask(txCtx, command.TaskID, command.UserID)
 		if err != nil {
 			return err
 		}
@@ -91,16 +92,16 @@ func (s *Service) Stop(ctx context.Context, command StopCommand) (domaintask.Tas
 }
 
 func (s *Service) RetryTranslate(ctx context.Context, command RetryCommand) (domaintask.Task, error) {
-	return s.retry(ctx, command.TaskID, false)
+	return s.retry(ctx, command, false)
 }
 
 func (s *Service) RetryDraw(ctx context.Context, command RetryCommand) (domaintask.Task, error) {
-	return s.retry(ctx, command.TaskID, true)
+	return s.retry(ctx, command, true)
 }
 
-func (s *Service) retry(ctx context.Context, taskID string, reusePrompt bool) (domaintask.Task, error) {
+func (s *Service) retry(ctx context.Context, command RetryCommand, reusePrompt bool) (domaintask.Task, error) {
 	return s.createAndEnqueue(ctx, func(txCtx context.Context) (domaintask.Task, error) {
-		source, err := s.Get(txCtx, taskID)
+		source, err := s.loadOwnedTask(txCtx, command.TaskID, command.UserID)
 		if err != nil {
 			return domaintask.Task{}, err
 		}
@@ -169,10 +170,25 @@ func (s *Service) Get(ctx context.Context, taskID string) (domaintask.Task, erro
 	return s.tasks.Get(ctx, taskID)
 }
 
-func (s *Service) GetPrompt(ctx context.Context, taskID string) (string, error) {
-	task, err := s.Get(ctx, taskID)
+func (s *Service) GetPrompt(ctx context.Context, command GetPromptCommand) (string, error) {
+	task, err := s.loadOwnedTask(ctx, command.TaskID, command.UserID)
 	if err != nil {
 		return "", err
 	}
 	return task.Prompt, nil
+}
+
+func (s *Service) loadOwnedTask(ctx context.Context, taskID string, userID string) (domaintask.Task, error) {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return domaintask.Task{}, fmt.Errorf("user id is required")
+	}
+	task, err := s.Get(ctx, taskID)
+	if err != nil {
+		return domaintask.Task{}, err
+	}
+	if task.UserID != userID {
+		return domaintask.Task{}, ErrTaskAccessDenied
+	}
+	return task, nil
 }

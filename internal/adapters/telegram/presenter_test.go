@@ -86,3 +86,27 @@ func TestTaskProgressMarkup(t *testing.T) {
 		t.Fatalf("unexpected progress callback: %#v", markup.InlineKeyboard[0][0])
 	}
 }
+
+func TestResultTaskMarkupAndPromptText(t *testing.T) {
+	markup := resultTaskMarkup("task-1")
+	if markup == nil {
+		t.Fatal("expected result markup")
+	}
+	if len(markup.InlineKeyboard) != 2 {
+		t.Fatalf("unexpected result markup rows: %#v", markup)
+	}
+	if markup.InlineKeyboard[0][0].CallbackData != "task:prompt:task-1" {
+		t.Fatalf("unexpected prompt callback: %#v", markup.InlineKeyboard[0][0])
+	}
+	if markup.InlineKeyboard[1][0].CallbackData != "task:retry:translate:task-1" {
+		t.Fatalf("unexpected retry translate callback: %#v", markup.InlineKeyboard[1][0])
+	}
+	if markup.InlineKeyboard[1][1].CallbackData != "task:retry:draw:task-1" {
+		t.Fatalf("unexpected retry draw callback: %#v", markup.InlineKeyboard[1][1])
+	}
+
+	text := buildPromptText(" masterpiece, moonlit_girl ")
+	if !strings.Contains(text, "Prompt") || !strings.Contains(text, "masterpiece, moonlit_girl") {
+		t.Fatalf("unexpected prompt text: %s", text)
+	}
+}

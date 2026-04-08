@@ -22,6 +22,7 @@ type telegramMessengerStub struct {
 	sendPhotoCaption   string
 	sendPhotoContent   []byte
 	sendPhotoMessageID int64
+	sendPhotoTaskID    string
 
 	editChatID    int64
 	editMessageID int64
@@ -74,6 +75,19 @@ func (s *telegramMessengerStub) SendPhotoMessage(_ context.Context, chatID int64
 	s.sendPhotoName = filename
 	s.sendPhotoCaption = caption
 	s.sendPhotoContent = append([]byte(nil), content...)
+	if s.sendPhotoMessageID == 0 {
+		return 84, nil
+	}
+	return s.sendPhotoMessageID, nil
+}
+
+func (s *telegramMessengerStub) SendResultPhotoMessage(_ context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte, taskID string) (int64, error) {
+	s.sendPhotoChatID = chatID
+	s.sendPhotoReplyTo = replyToMessageID
+	s.sendPhotoName = filename
+	s.sendPhotoCaption = caption
+	s.sendPhotoContent = append([]byte(nil), content...)
+	s.sendPhotoTaskID = taskID
 	if s.sendPhotoMessageID == 0 {
 		return 84, nil
 	}
@@ -164,6 +178,31 @@ func TestBootstrapRunnerNotifierSendImageReadsRelativePath(t *testing.T) {
 	}
 	if messenger.sendPhotoName != "task-1.jpg" || messenger.sendPhotoCaption != "caption" || string(messenger.sendPhotoContent) != "jpg" {
 		t.Fatalf("unexpected send photo payload: %#v", messenger)
+	}
+}
+
+func TestBootstrapRunnerNotifierSendResultImageUsesTaskControls(t *testing.T) {
+	rootDir := t.TempDir()
+	imagePath := filepath.Join(rootDir, "data", "images", "task-1.jpg")
+	if err := os.MkdirAll(filepath.Dir(imagePath), 0o755); err != nil {
+		t.Fatalf("mkdir image dir: %v", err)
+	}
+	if err := os.WriteFile(imagePath, []byte("jpg"), 0o644); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+
+	messenger := &telegramMessengerStub{}
+	notifier := newBootstrapRunnerNotifier(messenger, rootDir)
+
+	_, err := notifier.SendImage(context.Background(), "123", "data/images/task-1.jpg", "", runnerapp.MessageOptions{
+		TaskID:  "task-1",
+		Variant: runnerapp.MessageVariantResult,
+	})
+	if err != nil {
+		t.Fatalf("send result image: %v", err)
+	}
+	if messenger.sendPhotoTaskID != "task-1" {
+		t.Fatalf("unexpected send result task id: %q", messenger.sendPhotoTaskID)
 	}
 }
 

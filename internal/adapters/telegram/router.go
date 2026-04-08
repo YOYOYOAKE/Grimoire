@@ -201,16 +201,47 @@ func (b *Bot) handleTaskAction(ctx context.Context, query CallbackQuery, action 
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "任务服务未初始化", true)
 		return
 	}
+	userID := telegramUserID(query.From.ID)
 
 	switch action.Kind {
 	case taskActionStop:
-		if _, err := b.taskService.Stop(ctx, taskapp.StopCommand{TaskID: action.TaskID}); err != nil {
+		if _, err := b.taskService.Stop(ctx, taskapp.StopCommand{TaskID: action.TaskID, UserID: userID}); err != nil {
 			b.logWarn("stop task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
 			b.answerCallbackQueryBestEffort(ctx, query.ID, "停止任务失败", true)
 			return
 		}
 		b.answerCallbackQueryBestEffort(ctx, query.ID, "已停止任务", false)
 		_ = b.editMessage(ctx, query.Message.Chat.ID, query.Message.MessageID, buildStoppedTaskText(), nil)
+	case taskActionPrompt:
+		prompt, err := b.taskService.GetPrompt(ctx, taskapp.GetPromptCommand{TaskID: action.TaskID, UserID: userID})
+		if err != nil {
+			b.logWarn("load task prompt failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
+			b.answerCallbackQueryBestEffort(ctx, query.ID, "查看 prompt 失败", true)
+			return
+		}
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
+			b.answerCallbackQueryBestEffort(ctx, query.ID, "当前任务没有 prompt", true)
+			return
+		}
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "已发送 prompt", false)
+		if _, err := b.sendMessage(ctx, query.Message.Chat.ID, buildPromptText(prompt), nil, query.Message.MessageID); err != nil {
+			b.logWarn("send prompt message failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
+		}
+	case taskActionRetryTranslate:
+		if _, err := b.taskService.RetryTranslate(ctx, taskapp.RetryCommand{TaskID: action.TaskID, UserID: userID}); err != nil {
+			b.logWarn("retry translate task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
+			b.answerCallbackQueryBestEffort(ctx, query.ID, "重新翻译失败", true)
+			return
+		}
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "已重新翻译并开始绘图", false)
+	case taskActionRetryDraw:
+		if _, err := b.taskService.RetryDraw(ctx, taskapp.RetryCommand{TaskID: action.TaskID, UserID: userID}); err != nil {
+			b.logWarn("retry draw task failed", "callback_id", query.ID, "task_id", action.TaskID, "error", err)
+			b.answerCallbackQueryBestEffort(ctx, query.ID, "重新绘图失败", true)
+			return
+		}
+		b.answerCallbackQueryBestEffort(ctx, query.ID, "已开始重新绘图", false)
 	default:
 		_ = b.answerCallbackQuery(ctx, query.ID, "操作无效", true)
 	}

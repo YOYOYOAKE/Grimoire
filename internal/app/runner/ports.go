@@ -39,6 +39,7 @@ type MessageVariant string
 const (
 	MessageVariantNone     MessageVariant = ""
 	MessageVariantProgress MessageVariant = "progress"
+	MessageVariantResult   MessageVariant = "result"
 )
 
 type Notifier interface {

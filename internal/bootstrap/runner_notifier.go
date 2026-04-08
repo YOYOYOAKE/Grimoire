@@ -17,6 +17,7 @@ type telegramMessenger interface {
 	EditText(ctx context.Context, chatID int64, messageID int64, text string) error
 	EditProgressText(ctx context.Context, chatID int64, messageID int64, text string, taskID string) error
 	SendPhotoMessage(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte) (int64, error)
+	SendResultPhotoMessage(ctx context.Context, chatID int64, replyToMessageID int64, filename string, caption string, content []byte, taskID string) (int64, error)
 	DeleteMessage(ctx context.Context, chatID int64, messageID int64) error
 }
 
@@ -90,7 +91,12 @@ func (n *bootstrapRunnerNotifier) SendImage(ctx context.Context, userID string, 
 	if err != nil {
 		return "", fmt.Errorf("read image %s: %w", absolutePath, err)
 	}
-	messageID, err := n.bot.SendPhotoMessage(ctx, chatID, replyTo, filepath.Base(absolutePath), caption, content)
+	var messageID int64
+	if options.Variant == runnerapp.MessageVariantResult && strings.TrimSpace(options.TaskID) != "" {
+		messageID, err = n.bot.SendResultPhotoMessage(ctx, chatID, replyTo, filepath.Base(absolutePath), caption, content, options.TaskID)
+	} else {
+		messageID, err = n.bot.SendPhotoMessage(ctx, chatID, replyTo, filepath.Base(absolutePath), caption, content)
+	}
 	if err != nil {
 		return "", err
 	}

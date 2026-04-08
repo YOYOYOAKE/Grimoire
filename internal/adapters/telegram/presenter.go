@@ -91,8 +91,30 @@ func taskProgressMarkup(taskID string) *InlineKeyboardMarkup {
 	}
 }
 
+func resultTaskMarkup(taskID string) *InlineKeyboardMarkup {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil
+	}
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "查看 prompt", CallbackData: taskPromptPrefix + taskID},
+			},
+			{
+				{Text: "重新翻译并绘图", CallbackData: taskRetryTranslatePrefix + taskID},
+				{Text: "不翻译并重新绘图", CallbackData: taskRetryDrawPrefix + taskID},
+			},
+		},
+	}
+}
+
 func buildStoppedTaskText() string {
 	return "已停止任务"
+}
+
+func buildPromptText(prompt string) string {
+	return fmt.Sprintf("Prompt\n%s", strings.TrimSpace(prompt))
 }
 
 func buildBalanceText(balance domainnai.AccountBalance) string {

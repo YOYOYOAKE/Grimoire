@@ -11,10 +11,17 @@ type CreateCommand struct {
 
 type StopCommand struct {
 	TaskID string
+	UserID string
 }
 
 type RetryCommand struct {
 	TaskID string
+	UserID string
+}
+
+type GetPromptCommand struct {
+	TaskID string
+	UserID string
 }
 
 type TaskView struct {
