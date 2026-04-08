@@ -135,6 +135,22 @@ func TestHandleMessageSubmitsDrawTask(t *testing.T) {
 	}
 }
 
+func TestRouteUpdateDispatchesMessage(t *testing.T) {
+	bot, drawService, _, _, _ := newTestBot(t)
+	bot.routeUpdate(context.Background(), Update{
+		Message: &Message{
+			MessageID: 10,
+			From:      &User{ID: 1},
+			Chat:      Chat{ID: 100},
+			Text:      "画一个月下的少女",
+		},
+	})
+
+	if len(drawService.commands) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(drawService.commands))
+	}
+}
+
 func TestImgCallbackUpdatesShape(t *testing.T) {
 	bot, _, prefService, _, buffer := newTestBot(t)
 	bot.handleCallbackQuery(context.Background(), CallbackQuery{
@@ -152,6 +168,27 @@ func TestImgCallbackUpdatesShape(t *testing.T) {
 	}
 	if !strings.Contains(buffer.String(), "editMessageText") {
 		t.Fatalf("expected edit message request, got %s", buffer.String())
+	}
+}
+
+func TestHandleCallbackQueryRejectsInvalidData(t *testing.T) {
+	bot, _, _, _, buffer := newTestBot(t)
+	bot.handleCallbackQuery(context.Background(), CallbackQuery{
+		ID:   "cb-invalid",
+		From: User{ID: 1},
+		Message: &Message{
+			MessageID: 21,
+			Chat:      Chat{ID: 100},
+		},
+		Data: "unknown:callback",
+	})
+
+	logOutput := buffer.String()
+	if !strings.Contains(logOutput, "answerCallbackQuery") {
+		t.Fatalf("expected answerCallbackQuery request, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"text":"操作无效"`) {
+		t.Fatalf("expected invalid callback text, got %s", logOutput)
 	}
 }
 

@@ -1,0 +1,53 @@
+package telegram
+
+import (
+	"testing"
+
+	domaindraw "grimoire/internal/domain/draw"
+)
+
+func TestParseCallbackAction(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		want   callbackAction
+		wantOK bool
+	}{
+		{
+			name:   "shape callback",
+			input:  cbShapeLargeLandscape,
+			want:   callbackAction{Kind: callbackActionUpdateShape, Shape: domaindraw.ShapeLargeLandscape},
+			wantOK: true,
+		},
+		{
+			name:   "set artists callback",
+			input:  cbSetArtists,
+			want:   callbackAction{Kind: callbackActionSetArtists},
+			wantOK: true,
+		},
+		{
+			name:   "clear artists callback",
+			input:  cbClearArtists,
+			want:   callbackAction{Kind: callbackActionClearArtists},
+			wantOK: true,
+		},
+		{
+			name:   "invalid callback",
+			input:  "task:stop:1",
+			want:   callbackAction{},
+			wantOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseCallbackAction(tt.input)
+			if ok != tt.wantOK {
+				t.Fatalf("unexpected ok=%v", ok)
+			}
+			if got != tt.want {
+				t.Fatalf("unexpected action: %#v", got)
+			}
+		})
+	}
+}
