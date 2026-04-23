@@ -73,6 +73,40 @@ func (b *Bot) handleMessage(ctx context.Context, message Message) {
 			"session_id", created.ID,
 		)
 		return
+	case "/fast":
+		b.clearPendingArtists()
+		if b.preferenceService == nil {
+			b.logWarn("preference service is not initialized", "chat_id", message.Chat.ID)
+			b.sendSimpleMessage(ctx, message.Chat.ID, "偏好服务未初始化")
+			return
+		}
+		if _, err := b.preferenceService.UpdateMode(ctx, preferencesapp.UpdateModeCommand{
+			UserID: telegramUserID(message.From.ID),
+			Mode:   domainpreferences.ModeFast,
+		}); err != nil {
+			b.logWarn("update mode failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "mode", domainpreferences.ModeFast, "error", err)
+			b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("切换快速模式失败: %v", err))
+			return
+		}
+		_, _ = b.sendMessage(ctx, message.Chat.ID, buildFastModeText(), nil, 0)
+		return
+	case "/expert":
+		b.clearPendingArtists()
+		if b.preferenceService == nil {
+			b.logWarn("preference service is not initialized", "chat_id", message.Chat.ID)
+			b.sendSimpleMessage(ctx, message.Chat.ID, "偏好服务未初始化")
+			return
+		}
+		if _, err := b.preferenceService.UpdateMode(ctx, preferencesapp.UpdateModeCommand{
+			UserID: telegramUserID(message.From.ID),
+			Mode:   domainpreferences.ModeExpert,
+		}); err != nil {
+			b.logWarn("update mode failed", "chat_id", message.Chat.ID, "message_id", message.MessageID, "mode", domainpreferences.ModeExpert, "error", err)
+			b.sendSimpleMessage(ctx, message.Chat.ID, fmt.Sprintf("切换专家模式失败: %v", err))
+			return
+		}
+		_, _ = b.sendMessage(ctx, message.Chat.ID, buildExpertModeText(), nil, 0)
+		return
 	case "/img":
 		b.clearPendingArtists()
 		b.sendImageMenu(ctx, telegramUserID(message.From.ID), message.Chat.ID, 0, "")

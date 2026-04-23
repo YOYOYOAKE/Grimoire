@@ -8,6 +8,7 @@ import (
 
 	conversationapp "grimoire/internal/app/conversation"
 	sessionapp "grimoire/internal/app/session"
+	domainpreferences "grimoire/internal/domain/preferences"
 )
 
 type Service struct {
@@ -70,6 +71,7 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 		"user_id", userID,
 		"preference_shape", user.Preference.Shape,
 		"preference_artists", user.Preference.Artists,
+		"preference_mode", user.Preference.Mode,
 	)
 
 	currentSession, err := s.sessions.GetOrCreate(ctx, sessionapp.GetOrCreateCommand{UserID: userID})
@@ -81,6 +83,37 @@ func (s *Service) HandleText(ctx context.Context, command HandleTextCommand) (Ha
 		"user_id", userID,
 		"session_id", currentSession.ID,
 	)
+
+	if user.Preference.Mode == domainpreferences.ModeFast {
+		if s.tasks == nil {
+			return HandleTextResult{}, fmt.Errorf("task service is required")
+		}
+		taskContext, err := buildTaskContext(user.Preference)
+		if err != nil {
+			return HandleTextResult{}, err
+		}
+		task, err := s.tasks.Create(ctx, taskCreateCommand(
+			userID,
+			currentSession.ID,
+			text,
+			taskContext,
+		))
+		if err != nil {
+			return HandleTextResult{}, err
+		}
+		s.logger.Info(
+			"chat fast mode task created",
+			"user_id", userID,
+			"session_id", currentSession.ID,
+			"request", text,
+			"task_context", taskContext.Raw(),
+			"task_id", task.ID,
+		)
+		return HandleTextResult{
+			SessionID:     currentSession.ID,
+			CreatedTaskID: task.ID,
+		}, nil
+	}
 
 	if _, err := s.sessions.AppendUserMessage(ctx, sessionapp.AppendMessageCommand{
 		SessionID: currentSession.ID,

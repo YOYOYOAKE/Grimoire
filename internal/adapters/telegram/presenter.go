@@ -11,7 +11,7 @@ import (
 )
 
 func buildStartText() string {
-	return "Grimoire v2\n\n发送文本即可进入需求对话，确认后再开始绘图。\n发送 /new 可新建一个会话并重新开始需求收敛。\n发送 /img 可修改全局默认图像尺寸和画师串。\n发送 /balance 可查询 NAI 余额。"
+	return "Grimoire v2\n\n发送文本即可进入需求对话，确认后再开始绘图。\n发送 /new 可新建一个会话并重新开始需求收敛。\n发送 /fast 可切换到快速模式，后续消息将直接开始绘图。\n发送 /expert 可切换到专家模式，恢复需求对话流程。\n发送 /img 可修改全局默认图像尺寸和画师串。\n发送 /balance 可查询 NAI 余额。"
 }
 
 func buildImageMenuText(notice string, pref domainpreferences.Preference) string {
@@ -58,6 +58,14 @@ func buildTaskStartedText() string {
 
 func buildNewSessionText() string {
 	return "已开始新的会话，之前的对话不会影响后续需求。"
+}
+
+func buildFastModeText() string {
+	return "已切换到快速模式，后续发送文本将直接开始绘图。"
+}
+
+func buildExpertModeText() string {
+	return "已切换到专家模式，后续会先进入需求对话。"
 }
 
 func taskProgressMarkup(taskID string) *InlineKeyboardMarkup {

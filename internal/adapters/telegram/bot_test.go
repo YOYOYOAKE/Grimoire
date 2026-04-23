@@ -151,7 +151,9 @@ func (m *taskServiceMock) RetryDraw(_ context.Context, command taskapp.RetryComm
 }
 
 type preferenceServiceMock struct {
-	pref domainpreferences.Preference
+	pref         domainpreferences.Preference
+	updateModes  []preferencesapp.UpdateModeCommand
+	updateModeErr error
 }
 
 type balanceServiceMock struct {
@@ -180,6 +182,20 @@ func (m *preferenceServiceMock) UpdateArtists(_ context.Context, command prefere
 
 func (m *preferenceServiceMock) ClearArtists(context.Context, preferencesapp.ClearArtistsCommand) (domainpreferences.Preference, error) {
 	m.pref = domainpreferences.DefaultPreference()
+	return m.pref, nil
+}
+
+func (m *preferenceServiceMock) UpdateMode(_ context.Context, command preferencesapp.UpdateModeCommand) (domainpreferences.Preference, error) {
+	m.updateModes = append(m.updateModes, command)
+	if m.updateModeErr != nil {
+		return domainpreferences.Preference{}, m.updateModeErr
+	}
+	if !m.pref.Shape.Valid() {
+		m.pref = domainpreferences.DefaultPreference()
+	}
+	if err := m.pref.SetMode(command.Mode); err != nil {
+		return domainpreferences.Preference{}, err
+	}
 	return m.pref, nil
 }
 
@@ -391,6 +407,8 @@ func TestHandleStartCommandKeepsCommandFlow(t *testing.T) {
 	for _, expected := range []string{
 		"发送文本即可进入需求对话，确认后再开始绘图。",
 		"发送 /new 可新建一个会话并重新开始需求收敛。",
+		"发送 /fast 可切换到快速模式，后续消息将直接开始绘图。",
+		"发送 /expert 可切换到专家模式，恢复需求对话流程。",
 	} {
 		if !strings.Contains(buffer.String(), expected) {
 			t.Fatalf("expected updated start text to include %q, got %s", expected, buffer.String())
@@ -469,6 +487,70 @@ func TestHandleNewCommandClearsPendingArtists(t *testing.T) {
 
 	if bot.isPendingArtists() {
 		t.Fatal("expected pending artists cleared after /new")
+	}
+}
+
+func TestHandleFastCommandUpdatesMode(t *testing.T) {
+	bot, _, chatService, _, prefService, _, buffer := newTestBot(t)
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 19,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/fast",
+	})
+
+	if len(chatService.commands) != 0 {
+		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
+	}
+	if len(prefService.updateModes) != 1 {
+		t.Fatalf("expected one update mode command, got %d", len(prefService.updateModes))
+	}
+	if prefService.updateModes[0].Mode != domainpreferences.ModeFast {
+		t.Fatalf("unexpected mode: %q", prefService.updateModes[0].Mode)
+	}
+	if !strings.Contains(buffer.String(), buildFastModeText()) {
+		t.Fatalf("expected fast mode text, got %s", buffer.String())
+	}
+}
+
+func TestHandleExpertCommandUpdatesMode(t *testing.T) {
+	bot, _, chatService, _, prefService, _, buffer := newTestBot(t)
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 20,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/expert",
+	})
+
+	if len(chatService.commands) != 0 {
+		t.Fatalf("expected no chat command, got %d", len(chatService.commands))
+	}
+	if len(prefService.updateModes) != 1 {
+		t.Fatalf("expected one update mode command, got %d", len(prefService.updateModes))
+	}
+	if prefService.updateModes[0].Mode != domainpreferences.ModeExpert {
+		t.Fatalf("unexpected mode: %q", prefService.updateModes[0].Mode)
+	}
+	if !strings.Contains(buffer.String(), buildExpertModeText()) {
+		t.Fatalf("expected expert mode text, got %s", buffer.String())
+	}
+}
+
+func TestHandleFastCommandClearsPendingArtists(t *testing.T) {
+	bot, _, _, _, _, _, _ := newTestBot(t)
+	bot.setPendingArtists()
+
+	bot.handleMessage(context.Background(), Message{
+		MessageID: 21,
+		From:      &User{ID: 1},
+		Chat:      Chat{ID: 100},
+		Text:      "/fast",
+	})
+
+	if bot.isPendingArtists() {
+		t.Fatal("expected pending artists cleared after /fast")
 	}
 }
 
@@ -707,13 +789,19 @@ func TestHandleBalanceCommandSendsError(t *testing.T) {
 	}
 }
 
-func TestSetMyCommandsIncludesBalance(t *testing.T) {
+func TestSetMyCommandsIncludesModeAndBalanceCommands(t *testing.T) {
 	bot, _, _, _, _, _, buffer := newTestBot(t)
 
 	if err := bot.setMyCommands(context.Background()); err != nil {
 		t.Fatalf("set commands: %v", err)
 	}
 
+	if !strings.Contains(buffer.String(), `"command":"fast"`) {
+		t.Fatalf("expected fast command in payload, got %s", buffer.String())
+	}
+	if !strings.Contains(buffer.String(), `"command":"expert"`) {
+		t.Fatalf("expected expert command in payload, got %s", buffer.String())
+	}
 	if !strings.Contains(buffer.String(), `"command":"balance"`) {
 		t.Fatalf("expected balance command in payload, got %s", buffer.String())
 	}

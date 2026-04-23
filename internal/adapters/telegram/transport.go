@@ -18,6 +18,8 @@ func (b *Bot) setMyCommands(ctx context.Context) error {
 		"commands": []map[string]string{
 			{"command": "start", "description": "机器人介绍"},
 			{"command": "new", "description": "新建当前会话"},
+			{"command": "fast", "description": "切换到快速模式"},
+			{"command": "expert", "description": "切换到专家模式"},
 			{"command": "img", "description": "绘图偏好"},
 			{"command": "balance", "description": "查询 NAI 余额"},
 		},

@@ -256,6 +256,62 @@ func TestHandleTextCreatesTaskWhenConversationRequestsDrawing(t *testing.T) {
 	}
 }
 
+func TestHandleTextFastModeCreatesTaskWithoutConversationOrHistory(t *testing.T) {
+	preference, err := domainpreferences.New(domaindraw.ShapePortrait, "artist:foo")
+	if err != nil {
+		t.Fatalf("new preference: %v", err)
+	}
+	if err := preference.SetMode(domainpreferences.ModeFast); err != nil {
+		t.Fatalf("set mode: %v", err)
+	}
+	user, err := domainuser.New("user-1", domainuser.RoleNormal, preference)
+	if err != nil {
+		t.Fatalf("new user: %v", err)
+	}
+	session := newChatTestSession(t, "session-1", "user-1")
+	conversations := &chatConversationServiceStub{}
+	tasks := &chatTaskServiceStub{}
+	sessions := &chatSessionServiceStub{session: session}
+	service := NewService(
+		&chatUserRepositoryStub{user: user},
+		sessions,
+		conversations,
+		tasks,
+		nil,
+	)
+
+	result, err := service.HandleText(context.Background(), HandleTextCommand{
+		UserID:    "user-1",
+		MessageID: "msg-1",
+		Text:      "直接画一个月下少女",
+		CreatedAt: time.Unix(1, 0).UTC(),
+	})
+	if err != nil {
+		t.Fatalf("handle text: %v", err)
+	}
+	if result.CreatedTaskID != "task-1" {
+		t.Fatalf("unexpected created task id: %q", result.CreatedTaskID)
+	}
+	if result.Reply != "" {
+		t.Fatalf("expected empty reply, got %q", result.Reply)
+	}
+	if sessions.appendCallCount != 0 {
+		t.Fatalf("expected no appended messages, got %d", sessions.appendCallCount)
+	}
+	if conversations.callCount != 0 {
+		t.Fatalf("expected no conversation call, got %d", conversations.callCount)
+	}
+	if tasks.callCount != 1 {
+		t.Fatalf("expected one task create call, got %d", tasks.callCount)
+	}
+	if tasks.got.Request != "直接画一个月下少女" {
+		t.Fatalf("unexpected task request: %q", tasks.got.Request)
+	}
+	if tasks.got.Context.Raw() != `{"version":2,"shape":"portrait","artists":"artist:foo"}` {
+		t.Fatalf("unexpected task context: %q", tasks.got.Context.Raw())
+	}
+}
+
 func TestHandleTextReturnsTaskCreateError(t *testing.T) {
 	user := newChatTestUser(t, "user-1")
 	session := newChatTestSession(t, "session-1", "user-1")

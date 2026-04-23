@@ -47,6 +47,7 @@ type PreferenceService interface {
 	UpdateShape(ctx context.Context, command preferencesapp.UpdateShapeCommand) (domainpreferences.Preference, error)
 	UpdateArtists(ctx context.Context, command preferencesapp.UpdateArtistsCommand) (domainpreferences.Preference, error)
 	ClearArtists(ctx context.Context, command preferencesapp.ClearArtistsCommand) (domainpreferences.Preference, error)
+	UpdateMode(ctx context.Context, command preferencesapp.UpdateModeCommand) (domainpreferences.Preference, error)
 }
 
 type BalanceService interface {
