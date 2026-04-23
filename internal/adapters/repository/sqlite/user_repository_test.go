@@ -83,6 +83,42 @@ func TestUserRepositoryUpdatePreference(t *testing.T) {
 	}
 }
 
+func TestUserRepositoryPersistsMode(t *testing.T) {
+	db := openMigratedTestDB(t)
+	repository := NewUserRepository(db)
+	user := newTestUser(t, "user-1", domainuser.RoleNormal, domaindraw.ShapeSquare, "")
+
+	if err := repository.Create(context.Background(), user); err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	preference := domainpreferences.DefaultPreference()
+	if err := preference.SetMode(domainpreferences.ModeFast); err != nil {
+		t.Fatalf("set mode: %v", err)
+	}
+	if err := repository.UpdatePreference(context.Background(), "user-1", preference); err != nil {
+		t.Fatalf("update preference: %v", err)
+	}
+
+	got, err := repository.GetByTelegramID(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("get user: %v", err)
+	}
+	if got.Preference.Mode != domainpreferences.ModeFast {
+		t.Fatalf("unexpected mode: %q", got.Preference.Mode)
+	}
+}
+
+func TestDecodePreferenceDefaultsMissingModeToExpert(t *testing.T) {
+	preference, err := decodePreference(`{"shape":"square","artists":"artist:foo"}`)
+	if err != nil {
+		t.Fatalf("decode preference: %v", err)
+	}
+	if preference.Mode != domainpreferences.ModeExpert {
+		t.Fatalf("expected expert mode, got %q", preference.Mode)
+	}
+}
+
 func newTestUser(t *testing.T, telegramID string, role domainuser.Role, shape domaindraw.Shape, artists string) domainuser.User {
 	t.Helper()
 

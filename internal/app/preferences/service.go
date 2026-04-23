@@ -77,6 +77,24 @@ func (s *Service) ClearArtists(ctx context.Context, command ClearArtistsCommand)
 	return preference, nil
 }
 
+func (s *Service) UpdateMode(ctx context.Context, command UpdateModeCommand) (domainpreferences.Preference, error) {
+	preference, err := s.Get(ctx, GetCommand{UserID: command.UserID})
+	if err != nil {
+		return domainpreferences.Preference{}, err
+	}
+	if err := preference.SetMode(command.Mode); err != nil {
+		return domainpreferences.Preference{}, err
+	}
+	userID, err := normalizeUserID(command.UserID)
+	if err != nil {
+		return domainpreferences.Preference{}, err
+	}
+	if err := s.repository.UpdatePreference(ctx, userID, preference); err != nil {
+		return domainpreferences.Preference{}, err
+	}
+	return preference, nil
+}
+
 func (s *Service) loadUser(ctx context.Context, userID string) (domainuser.User, error) {
 	normalizedUserID, err := normalizeUserID(userID)
 	if err != nil {

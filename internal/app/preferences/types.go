@@ -1,6 +1,9 @@
 package preferences
 
-import "grimoire/internal/domain/draw"
+import (
+	"grimoire/internal/domain/draw"
+	domainpreferences "grimoire/internal/domain/preferences"
+)
 
 type GetCommand struct {
 	UserID string
@@ -18,4 +21,9 @@ type UpdateArtistsCommand struct {
 
 type ClearArtistsCommand struct {
 	UserID string
+}
+
+type UpdateModeCommand struct {
+	UserID string
+	Mode   domainpreferences.Mode
 }

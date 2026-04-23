@@ -58,3 +58,31 @@ func TestValidateAcceptsDefaultPreference(t *testing.T) {
 		t.Fatalf("validate default preference: %v", err)
 	}
 }
+
+func TestDefaultPreferenceUsesExpertMode(t *testing.T) {
+	if DefaultPreference().Mode != ModeExpert {
+		t.Fatalf("expected expert mode by default, got %q", DefaultPreference().Mode)
+	}
+}
+
+func TestSetModeRejectsInvalidMode(t *testing.T) {
+	preference := DefaultPreference()
+
+	if err := preference.SetMode(Mode("invalid")); err == nil {
+		t.Fatal("expected error")
+	}
+	if preference.Mode != ModeExpert {
+		t.Fatalf("unexpected mode after failed update: %q", preference.Mode)
+	}
+}
+
+func TestSetModeUpdatesMode(t *testing.T) {
+	preference := DefaultPreference()
+
+	if err := preference.SetMode(ModeFast); err != nil {
+		t.Fatalf("set mode: %v", err)
+	}
+	if preference.Mode != ModeFast {
+		t.Fatalf("unexpected mode: %q", preference.Mode)
+	}
+}

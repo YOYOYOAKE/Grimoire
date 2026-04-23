@@ -25,6 +25,7 @@ type userRecord struct {
 type preferenceRecord struct {
 	Shape   string `json:"shape"`
 	Artists string `json:"artists"`
+	Mode    string `json:"mode,omitempty"`
 }
 
 func NewUserRepository(db *sql.DB) *UserRepository {
@@ -112,6 +113,7 @@ func encodePreference(preference domainpreferences.Preference) (string, error) {
 	data, err := json.Marshal(preferenceRecord{
 		Shape:   string(preference.Shape),
 		Artists: preference.Artists,
+		Mode:    string(preference.Mode),
 	})
 	if err != nil {
 		return "", fmt.Errorf("encode user preference: %w", err)
@@ -127,7 +129,21 @@ func decodePreference(raw string) (domainpreferences.Preference, error) {
 	if strings.TrimSpace(record.Shape) == "" {
 		preference := domainpreferences.DefaultPreference()
 		preference.SetArtists(record.Artists)
+		if mode := strings.TrimSpace(record.Mode); mode != "" {
+			if err := preference.SetMode(domainpreferences.Mode(mode)); err != nil {
+				return domainpreferences.Preference{}, err
+			}
+		}
 		return preference, nil
 	}
-	return domainpreferences.New(domaindraw.Shape(record.Shape), record.Artists)
+	preference, err := domainpreferences.New(domaindraw.Shape(record.Shape), record.Artists)
+	if err != nil {
+		return domainpreferences.Preference{}, err
+	}
+	if mode := strings.TrimSpace(record.Mode); mode != "" {
+		if err := preference.SetMode(domainpreferences.Mode(mode)); err != nil {
+			return domainpreferences.Preference{}, err
+		}
+	}
+	return preference, nil
 }

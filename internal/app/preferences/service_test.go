@@ -120,3 +120,31 @@ func TestUpdateShapeReturnsRepositoryError(t *testing.T) {
 		t.Fatalf("expected repository error, got %v", err)
 	}
 }
+
+func TestUpdateModeUpdatesPreference(t *testing.T) {
+	repo := &preferenceRepoStub{preference: domainpreferences.DefaultPreference()}
+	service := NewService(repo)
+
+	preference, err := service.UpdateMode(context.Background(), UpdateModeCommand{
+		UserID: "user-1",
+		Mode:   domainpreferences.ModeFast,
+	})
+	if err != nil {
+		t.Fatalf("update mode: %v", err)
+	}
+	if preference.Mode != domainpreferences.ModeFast {
+		t.Fatalf("unexpected mode: %q", preference.Mode)
+	}
+}
+
+func TestUpdateModeRejectsInvalidMode(t *testing.T) {
+	repo := &preferenceRepoStub{preference: domainpreferences.DefaultPreference()}
+	service := NewService(repo)
+
+	if _, err := service.UpdateMode(context.Background(), UpdateModeCommand{
+		UserID: "user-1",
+		Mode:   domainpreferences.Mode("invalid"),
+	}); err == nil {
+		t.Fatal("expected error")
+	}
+}
