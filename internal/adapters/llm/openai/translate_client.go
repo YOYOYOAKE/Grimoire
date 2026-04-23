@@ -41,6 +41,20 @@ type translationResult struct {
 	ResponseMode string
 }
 
+type translateAttemptError struct {
+	err              error
+	rawResponse      string
+	assistantContent string
+}
+
+func (e *translateAttemptError) Error() string {
+	return e.err.Error()
+}
+
+func (e *translateAttemptError) Unwrap() error {
+	return e.err
+}
+
 const translatePromptToolName = "translate_prompt"
 const attemptsPerLLM = 3
 
@@ -136,19 +150,20 @@ func (c *TranslateClient) translate(ctx context.Context, prompt string, shape do
 		return translationResult{}, fmt.Errorf("read llm response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		c.logFailure("llm returned non-200", shape, fmt.Errorf("status=%d", resp.StatusCode), string(respBody), "")
-		return translationResult{}, fmt.Errorf("llm status=%d body=%s", resp.StatusCode, truncate(string(respBody), 400))
+		statusErr := fmt.Errorf("llm status=%d body=%s", resp.StatusCode, truncate(string(respBody), 400))
+		c.logFailure("llm returned non-200", shape, statusErr, string(respBody), "")
+		return translationResult{}, withTranslateAttemptDetails(statusErr, string(respBody), "")
 	}
 
 	content, responseMode, err := extractAssistantContent(respBody)
 	if err != nil {
 		c.logFailure("extract llm content failed", shape, err, string(respBody), "")
-		return translationResult{}, err
+		return translationResult{}, withTranslateAttemptDetails(err, string(respBody), "")
 	}
 	translation, err := parseTranslation(content)
 	if err != nil {
 		c.logFailure("parse llm content failed", shape, err, string(respBody), content)
-		return translationResult{}, err
+		return translationResult{}, withTranslateAttemptDetails(err, string(respBody), content)
 	}
 	return translationResult{
 		Translation:  translation,
@@ -666,10 +681,10 @@ func (c *TranslateClient) logFailure(message string, shape domaindraw.Shape, err
 		"error", err,
 	}
 	if strings.TrimSpace(rawResponse) != "" {
-		attrs = append(attrs, "raw_response", truncate(rawResponse, 2000))
+		attrs = append(attrs, "raw_response", rawResponse)
 	}
 	if strings.TrimSpace(assistantContent) != "" {
-		attrs = append(attrs, "assistant_content", truncate(assistantContent, 2000))
+		attrs = append(attrs, "assistant_content", assistantContent)
 	}
 	c.logger.Error(message, attrs...)
 }
@@ -742,13 +757,36 @@ func logTranslateAttemptFailure(logger *slog.Logger, shape domaindraw.Shape, llm
 		return
 	}
 
-	logger.Warn(
-		"llm translate attempt failed",
+	attrs := []any{
 		"shape", shape,
 		"llm_index", llmIndex,
 		"model", model,
 		"base_url_host", baseURLHost(baseURL),
 		"attempt", attempt,
 		"error", err,
-	)
+	}
+	var translateErr *translateAttemptError
+	if errors.As(err, &translateErr) {
+		if strings.TrimSpace(translateErr.rawResponse) != "" {
+			attrs = append(attrs, "raw_response", translateErr.rawResponse)
+		}
+		if strings.TrimSpace(translateErr.assistantContent) != "" {
+			attrs = append(attrs, "assistant_content", translateErr.assistantContent)
+		}
+	}
+	logger.Warn("llm translate attempt failed", attrs...)
+}
+
+func withTranslateAttemptDetails(err error, rawResponse string, assistantContent string) error {
+	if err == nil {
+		return nil
+	}
+	if strings.TrimSpace(rawResponse) == "" && strings.TrimSpace(assistantContent) == "" {
+		return err
+	}
+	return &translateAttemptError{
+		err:              err,
+		rawResponse:      rawResponse,
+		assistantContent: assistantContent,
+	}
 }

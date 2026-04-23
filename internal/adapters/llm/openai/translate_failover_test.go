@@ -272,3 +272,51 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 		t.Fatalf("did not expect response_mode in success log, got %s", logOutput)
 	}
 }
+
+func TestFailoverClientLogsRawResponseFromAttemptError(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+	first := &translateStub{
+		modelName:  "first",
+		baseURLRaw: "https://first.example/v1",
+		results: []stubResult{
+			{
+				err: withTranslateAttemptDetails(
+					errors.New("parse llm json: invalid character '}' after top-level value"),
+					`{"choices":[{"message":{"content":"{\"prompt\":\"bad\"}}}"}}]}__FAILOVER_RAW_TAIL__`,
+					`{"prompt":"bad"}}`,
+				),
+			},
+			{err: errors.New("boom-2")},
+			{err: errors.New("boom-3")},
+		},
+	}
+	second := &translateStub{
+		modelName:  "second",
+		baseURLRaw: "https://second.example/v1",
+		results: []stubResult{
+			{
+				result: translationResult{
+					Translation: domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"},
+				},
+			},
+		},
+	}
+
+	client := newTranslateFailoverClient(
+		[]translateProvider{first, second},
+		slog.New(slog.NewTextHandler(logBuffer, nil)),
+	)
+
+	_, err := client.Translate(context.Background(), "moon", domaindraw.ShapeSquare)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, "__FAILOVER_RAW_TAIL__") {
+		t.Fatalf("expected raw response in attempt failure log, got %s", logOutput)
+	}
+	if !strings.Contains(logOutput, `assistant_content="{\"prompt\":\"bad\"}}"`) {
+		t.Fatalf("expected assistant content in attempt failure log, got %s", logOutput)
+	}
+}

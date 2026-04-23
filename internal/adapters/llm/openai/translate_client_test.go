@@ -461,6 +461,24 @@ func TestTranslateLogsRawResponseOnUnsupportedFormat(t *testing.T) {
 	}
 }
 
+func TestTranslateLogsFullRawResponseWithoutTruncation(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+	rawContent := `{"prompt":"moonlit girl"}`
+	fullResponse := `{"choices":[{"message":{"content":"` + rawContent + `}"}}]}__RAW_RESPONSE_TAIL__`
+	client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {
+		return newHTTPResponse(http.StatusOK, fullResponse), nil
+	})
+
+	_, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	logOutput := logBuffer.String()
+	if !strings.Contains(logOutput, "__RAW_RESPONSE_TAIL__") {
+		t.Fatalf("expected full raw response in logs, got %s", logOutput)
+	}
+}
+
 func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *TranslateClient {
 	t.Helper()
 
