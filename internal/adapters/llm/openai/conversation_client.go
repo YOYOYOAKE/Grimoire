@@ -37,12 +37,7 @@ type conversationMessagePayload struct {
 	Content string `json:"content"`
 }
 
-const (
-	createDrawingTaskToolName = "create_drawing_task"
-
-	conversationResponseModeJSON = "json"
-	conversationResponseModeTool = "tool"
-)
+const conversationResponseModeJSON = "json"
 
 func NewConversationClient(cfg config.LLM, logger *slog.Logger) *ConversationClient {
 	return &ConversationClient{
@@ -75,7 +70,9 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 		},
 		"temperature": 0.2,
 		"stream":      false,
-		"tools":       []any{createDrawingTaskTool()},
+		"response_format": map[string]string{
+			"type": "json_object",
+		},
 	}
 
 	payload, err := json.Marshal(body)
@@ -109,19 +106,13 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 
 	content, responseMode, err := extractConversationContent(respBody)
 	if err != nil {
-		c.logFailure("extract conversation content failed", err, string(respBody), "")
+		c.logFailure("extract conversation json content failed", err, string(respBody), "")
 		return conversation.ConversationOutput{}, err
 	}
 
-	var output conversation.ConversationOutput
-	switch responseMode {
-	case conversationResponseModeTool:
-		output, err = parseCreateDrawingTaskOutput(content)
-	default:
-		output, err = parseConversationOutput(content)
-	}
+	output, err := parseConversationOutput(content)
 	if err != nil {
-		c.logFailure("parse conversation content failed", err, string(respBody), content)
+		c.logFailure("parse conversation json content failed", err, string(respBody), content)
 		return conversation.ConversationOutput{}, err
 	}
 	c.logSuccess(input, string(userContent), string(respBody), responseMode, output)
@@ -145,76 +136,35 @@ func buildConversationPayload(input conversation.ConversationInput) (conversatio
 	}, nil
 }
 
-func createDrawingTaskTool() map[string]any {
-	return map[string]any{
-		"type": "function",
-		"function": map[string]any{
-			"name":        createDrawingTaskToolName,
-			"description": "Create a drawing task immediately when the user is explicitly asking to start drawing now.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"request": map[string]any{
-						"type":        "string",
-						"minLength":   1,
-						"description": "The final Chinese drawing request to hand to the drawing pipeline.",
-					},
-				},
-				"required":             []string{"request"},
-				"additionalProperties": false,
-			},
-		},
-	}
-}
-
 func parseConversationOutput(raw string) (conversation.ConversationOutput, error) {
 	raw = strings.TrimSpace(raw)
-	raw = strings.TrimPrefix(raw, "```text")
-	raw = strings.TrimPrefix(raw, "```markdown")
+	raw = strings.TrimPrefix(raw, "```json")
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
-	reply := strings.TrimSpace(raw)
-	if reply == "" {
-		return conversation.ConversationOutput{}, fmt.Errorf("conversation response missing reply")
-	}
-
-	return conversation.ConversationOutput{
-		Reply: reply,
-	}, nil
-}
-
-func parseCreateDrawingTaskOutput(raw string) (conversation.ConversationOutput, error) {
 	raw = strings.TrimSpace(raw)
+
 	var parsed struct {
+		Reply   string `json:"reply"`
 		Request string `json:"request"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return conversation.ConversationOutput{}, fmt.Errorf("parse create drawing task json: %w", err)
+		return conversation.ConversationOutput{}, fmt.Errorf("parse conversation json: %w", err)
 	}
 
+	reply := strings.TrimSpace(parsed.Reply)
 	request := strings.TrimSpace(parsed.Request)
-	if request == "" {
-		return conversation.ConversationOutput{}, fmt.Errorf("create drawing task response missing request")
+	switch {
+	case reply == "" && request == "":
+		return conversation.ConversationOutput{}, fmt.Errorf("conversation response missing reply or request")
+	case reply != "" && request != "":
+		return conversation.ConversationOutput{}, fmt.Errorf("conversation response reply and request are mutually exclusive")
+	case reply != "":
+		return conversation.ConversationOutput{Reply: reply}, nil
+	default:
+		return conversation.ConversationOutput{
+			CreateDrawingTask: &conversation.CreateDrawingTask{Request: request},
+		}, nil
 	}
-
-	return conversation.ConversationOutput{
-		CreateDrawingTask: &conversation.CreateDrawingTask{
-			Request: request,
-		},
-	}, nil
-}
-
-func isJSONObject(raw []byte) bool {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 || raw[0] != '{' {
-		return false
-	}
-
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return false
-	}
-	return true
 }
 
 func extractConversationContent(respBody []byte) (string, string, error) {
@@ -223,27 +173,11 @@ func extractConversationContent(respBody []byte) (string, string, error) {
 		return "", "", fmt.Errorf("empty llm response")
 	}
 
-	if arguments, found, err := parseConversationToolCallArguments(respBody); err != nil {
-		return "", "", err
-	} else if found {
-		return arguments, conversationResponseModeTool, nil
-	}
-
 	if content, ok := parseOpenAICompletionPayload(respBody); ok {
 		return content, conversationResponseModeJSON, nil
 	}
 
-	if json.Valid(respBody) {
-		return string(respBody), conversationResponseModeJSON, nil
-	}
-
 	if bytes.Contains(respBody, []byte("data:")) {
-		if arguments, found, err := parseConversationSSEToolCallArguments(respBody); err != nil {
-			return "", "", err
-		} else if found {
-			return arguments, conversationResponseModeTool, nil
-		}
-
 		content, err := parseConversationSSEContent(respBody)
 		if err != nil {
 			return "", "", err
@@ -254,108 +188,6 @@ func extractConversationContent(respBody []byte) (string, string, error) {
 	}
 
 	return "", "", fmt.Errorf("unsupported llm response format")
-}
-
-func parseConversationToolCallArguments(payload []byte) (string, bool, error) {
-	var out struct {
-		Choices []struct {
-			Message struct {
-				ToolCalls []struct {
-					Function struct {
-						Name      string          `json:"name"`
-						Arguments json.RawMessage `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(payload, &out); err != nil {
-		return "", false, nil
-	}
-	if len(out.Choices) == 0 {
-		return "", false, nil
-	}
-
-	for _, toolCall := range out.Choices[0].Message.ToolCalls {
-		if strings.TrimSpace(toolCall.Function.Name) != createDrawingTaskToolName {
-			continue
-		}
-		arguments, err := decodeToolArgumentString(toolCall.Function.Arguments)
-		if err != nil {
-			return "", true, err
-		}
-		return arguments, true, nil
-	}
-	return "", false, nil
-}
-
-func parseConversationSSEToolCallArguments(respBody []byte) (string, bool, error) {
-	type collectedToolCall struct {
-		name      string
-		arguments strings.Builder
-	}
-
-	lines := bytes.Split(respBody, []byte("\n"))
-	collected := make(map[int]*collectedToolCall)
-	order := make([]int, 0)
-
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-
-		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-			continue
-		}
-
-		var out struct {
-			Choices []struct {
-				Delta struct {
-					ToolCalls []struct {
-						Index    int `json:"index"`
-						Function struct {
-							Name      string          `json:"name"`
-							Arguments json.RawMessage `json:"arguments"`
-						} `json:"function"`
-					} `json:"tool_calls"`
-				} `json:"delta"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(payload, &out); err != nil {
-			continue
-		}
-		if len(out.Choices) == 0 {
-			continue
-		}
-
-		for _, toolCall := range out.Choices[0].Delta.ToolCalls {
-			call, ok := collected[toolCall.Index]
-			if !ok {
-				call = &collectedToolCall{}
-				collected[toolCall.Index] = call
-				order = append(order, toolCall.Index)
-			}
-			if name := strings.TrimSpace(toolCall.Function.Name); name != "" {
-				call.name = name
-			}
-			arguments, err := decodeToolArgumentString(toolCall.Function.Arguments)
-			if err != nil {
-				return "", true, err
-			}
-			call.arguments.WriteString(arguments)
-		}
-	}
-
-	for _, index := range order {
-		call := collected[index]
-		if call == nil || call.name != createDrawingTaskToolName {
-			continue
-		}
-		return call.arguments.String(), true, nil
-	}
-	return "", false, nil
 }
 
 func parseConversationSSEContent(respBody []byte) (string, error) {
@@ -375,35 +207,13 @@ func parseConversationSSEContent(respBody []byte) (string, error) {
 
 		if content, ok := parseOpenAICompletionPayload(payload); ok {
 			builder.WriteString(content)
-			continue
 		}
-		if isOpenAIEnvelope(payload) {
-			continue
-		}
-		if !shouldAppendRawConversationPayload(payload) {
-			continue
-		}
-
-		builder.Write(payload)
 	}
 
 	if builder.Len() == 0 {
 		return "", fmt.Errorf("unsupported llm response format")
 	}
 	return builder.String(), nil
-}
-
-func isOpenAIEnvelope(payload []byte) bool {
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &parsed); err != nil {
-		return false
-	}
-	_, ok := parsed["choices"]
-	return ok
-}
-
-func shouldAppendRawConversationPayload(payload []byte) bool {
-	return !isOpenAIEnvelope(payload)
 }
 
 func (c *ConversationClient) logFailure(message string, err error, rawResponse string, assistantContent string) {
@@ -464,11 +274,7 @@ func (c *ConversationClient) logSuccess(
 		"reply", output.Reply,
 	}
 	if output.CreateDrawingTask != nil {
-		attrs = append(
-			attrs,
-			"tool_name", createDrawingTaskToolName,
-			"request", output.CreateDrawingTask.Request,
-		)
+		attrs = append(attrs, "request", output.CreateDrawingTask.Request)
 	}
 
 	c.logger.Info("conversation llm response parsed", attrs...)
