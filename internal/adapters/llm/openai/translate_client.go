@@ -55,13 +55,9 @@ func (e *translateAttemptError) Unwrap() error {
 	return e.err
 }
 
-const translatePromptToolName = "translate_prompt"
 const attemptsPerLLM = 3
 
-const (
-	llmResponseModeTool      = "tool"
-	llmResponseModePlaintext = "plaintext"
-)
+const llmResponseModeJSON = "json"
 
 //go:embed translate_system_prompt.md
 var translateSystemPromptFile string
@@ -116,12 +112,8 @@ func (c *TranslateClient) translate(ctx context.Context, prompt string, shape do
 		},
 		"temperature": 0.2,
 		"stream":      false,
-		"tools":       []any{translatePromptTool()},
-		"tool_choice": map[string]any{
-			"type": "function",
-			"function": map[string]string{
-				"name": translatePromptToolName,
-			},
+		"response_format": map[string]string{
+			"type": "json_object",
 		},
 	}
 
@@ -157,12 +149,12 @@ func (c *TranslateClient) translate(ctx context.Context, prompt string, shape do
 
 	content, responseMode, err := extractAssistantContent(respBody)
 	if err != nil {
-		c.logFailure("extract llm content failed", shape, err, string(respBody), "")
+		c.logFailure("extract llm json content failed", shape, err, string(respBody), "")
 		return translationResult{}, withTranslateAttemptDetails(err, string(respBody), "")
 	}
 	translation, err := parseTranslation(content)
 	if err != nil {
-		c.logFailure("parse llm content failed", shape, err, string(respBody), content)
+		c.logFailure("parse llm json content failed", shape, err, string(respBody), content)
 		return translationResult{}, withTranslateAttemptDetails(err, string(respBody), content)
 	}
 	return translationResult{
@@ -213,58 +205,6 @@ func (c *TranslateFailoverClient) Translate(ctx context.Context, prompt string, 
 	}
 
 	return domaindraw.Translation{}, fmt.Errorf("all llm providers failed after %d attempts", totalAttempts)
-}
-
-func translatePromptTool() map[string]any {
-	return map[string]any{
-		"type": "function",
-		"function": map[string]any{
-			"name":        translatePromptToolName,
-			"description": "Return NovelAI V4.5 prompt data using the prompt, negative_prompt, and characters fields.",
-			"parameters": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"prompt": map[string]string{
-						"type":        "string",
-						"description": "Shared scene-level English prompt tags only. It must explicitly include inferred subject count tags such as 1girl, 1boy, 2girls, or 1boy,1girl. Use underscore-separated tags, do not include character-specific tags here, and allow weighted tags in the n::tag:: format for emphasized scene-level details.",
-					},
-					"negative_prompt": map[string]any{
-						"type":        "string",
-						"minLength":   1,
-						"description": "Shared scene-level English negative prompt tags. It must be non-empty.",
-					},
-					"characters": map[string]any{
-						"type":        "array",
-						"description": "Character-specific prompt entries. The array length must match the number of distinct characters inferred from the request, and may be empty only when there is no character subject.",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"prompt": map[string]any{
-									"type":        "string",
-									"minLength":   1,
-									"description": "Character-specific English prompt tags only. Use underscore-separated tags, use the character_name_(series_name) format for known character identities when applicable, and proactively apply 1.1 to 1.4 weights in the n::tag:: format to subject-defining traits and key actions; increase weights flexibly when the user explicitly emphasizes a detail.",
-								},
-								"negative_prompt": map[string]any{
-									"type":        "string",
-									"minLength":   1,
-									"description": "Character-specific English negative prompt tags. It must be non-empty.",
-								},
-								"position": map[string]any{
-									"type":        "string",
-									"description": "Character position on a 5x5 grid.",
-									"enum":        []string{"A1", "A2", "A3", "A4", "A5", "B1", "B2", "B3", "B4", "B5", "C1", "C2", "C3", "C4", "C5", "D1", "D2", "D3", "D4", "D5", "E1", "E2", "E3", "E4", "E5"},
-								},
-							},
-							"required":             []string{"prompt", "negative_prompt", "position"},
-							"additionalProperties": false,
-						},
-					},
-				},
-				"required":             []string{"prompt", "negative_prompt", "characters"},
-				"additionalProperties": false,
-			},
-		},
-	}
 }
 
 func parseTranslation(raw string) (domaindraw.Translation, error) {
@@ -417,26 +357,8 @@ func extractAssistantContent(respBody []byte) (string, string, error) {
 		return "", "", fmt.Errorf("empty llm response")
 	}
 
-	if arguments, found, err := parseToolCallArguments(respBody); err != nil {
-		return "", "", err
-	} else if found {
-		return arguments, llmResponseModeTool, nil
-	}
-
-	if bytes.Contains(respBody, []byte("data:")) {
-		if arguments, found, err := parseSSEToolCallArguments(respBody); err != nil {
-			return "", "", err
-		} else if found {
-			return arguments, llmResponseModeTool, nil
-		}
-	}
-
 	if content, ok := parseOpenAICompletionPayload(respBody); ok {
-		return content, llmResponseModePlaintext, nil
-	}
-
-	if _, err := parseTranslation(string(respBody)); err == nil {
-		return string(respBody), llmResponseModePlaintext, nil
+		return content, llmResponseModeJSON, nil
 	}
 
 	if bytes.Contains(respBody, []byte("data:")) {
@@ -445,112 +367,10 @@ func extractAssistantContent(respBody []byte) (string, string, error) {
 			return "", "", err
 		}
 		if strings.TrimSpace(content) != "" {
-			return content, llmResponseModePlaintext, nil
+			return content, llmResponseModeJSON, nil
 		}
 	}
 	return "", "", fmt.Errorf("unsupported llm response format")
-}
-
-func parseToolCallArguments(payload []byte) (string, bool, error) {
-	var out struct {
-		Choices []struct {
-			Message struct {
-				ToolCalls []struct {
-					Function struct {
-						Name      string          `json:"name"`
-						Arguments json.RawMessage `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(payload, &out); err != nil {
-		return "", false, nil
-	}
-	if len(out.Choices) == 0 {
-		return "", false, nil
-	}
-
-	for _, toolCall := range out.Choices[0].Message.ToolCalls {
-		if strings.TrimSpace(toolCall.Function.Name) != translatePromptToolName {
-			continue
-		}
-		arguments, err := decodeToolArgumentString(toolCall.Function.Arguments)
-		if err != nil {
-			return "", true, err
-		}
-		return arguments, true, nil
-	}
-	return "", false, nil
-}
-
-func parseSSEToolCallArguments(respBody []byte) (string, bool, error) {
-	type collectedToolCall struct {
-		name      string
-		arguments strings.Builder
-	}
-
-	lines := bytes.Split(respBody, []byte("\n"))
-	collected := make(map[int]*collectedToolCall)
-	order := make([]int, 0)
-
-	for _, line := range lines {
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-
-		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
-		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-			continue
-		}
-
-		var out struct {
-			Choices []struct {
-				Delta struct {
-					ToolCalls []struct {
-						Index    int `json:"index"`
-						Function struct {
-							Name      string          `json:"name"`
-							Arguments json.RawMessage `json:"arguments"`
-						} `json:"function"`
-					} `json:"tool_calls"`
-				} `json:"delta"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal(payload, &out); err != nil {
-			continue
-		}
-		if len(out.Choices) == 0 {
-			continue
-		}
-
-		for _, toolCall := range out.Choices[0].Delta.ToolCalls {
-			call, ok := collected[toolCall.Index]
-			if !ok {
-				call = &collectedToolCall{}
-				collected[toolCall.Index] = call
-				order = append(order, toolCall.Index)
-			}
-			if name := strings.TrimSpace(toolCall.Function.Name); name != "" {
-				call.name = name
-			}
-			arguments, err := decodeToolArgumentString(toolCall.Function.Arguments)
-			if err != nil {
-				return "", true, err
-			}
-			call.arguments.WriteString(arguments)
-		}
-	}
-
-	for _, index := range order {
-		call := collected[index]
-		if call == nil || call.name != translatePromptToolName {
-			continue
-		}
-		return call.arguments.String(), true, nil
-	}
-	return "", false, nil
 }
 
 func parseSSEContent(respBody []byte) (string, error) {
@@ -570,11 +390,6 @@ func parseSSEContent(respBody []byte) (string, error) {
 
 		if content, ok := parseOpenAICompletionPayload(payload); ok {
 			builder.WriteString(content)
-			continue
-		}
-
-		if _, err := parseTranslation(string(payload)); err == nil {
-			builder.Write(payload)
 		}
 	}
 
@@ -582,19 +397,6 @@ func parseSSEContent(respBody []byte) (string, error) {
 		return "", fmt.Errorf("unsupported llm response format")
 	}
 	return builder.String(), nil
-}
-
-func decodeToolArgumentString(raw json.RawMessage) (string, error) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return "", nil
-	}
-
-	var out string
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return "", fmt.Errorf("tool arguments must be string: %w", err)
-	}
-	return out, nil
 }
 
 func parseOpenAICompletionPayload(payload []byte) (string, bool) {

@@ -80,7 +80,7 @@ func TestFailoverClientReturnsFirstSuccessWithoutFallback(t *testing.T) {
 			{
 				result: translationResult{
 					Translation:  domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"},
-					ResponseMode: llmResponseModeTool,
+					ResponseMode: llmResponseModeJSON,
 				},
 			},
 		},
@@ -126,7 +126,7 @@ func TestFailoverClientRetriesThenFallsBack(t *testing.T) {
 			{
 				result: translationResult{
 					Translation:  domaindraw.Translation{Prompt: "pos-2", NegativePrompt: "neg-2"},
-					ResponseMode: llmResponseModePlaintext,
+					ResponseMode: llmResponseModeJSON,
 				},
 			},
 		},
@@ -224,7 +224,7 @@ func TestFailoverClientLogsProviderMetadataOnSuccessAndFailure(t *testing.T) {
 			{
 				result: translationResult{
 					Translation:  domaindraw.Translation{Prompt: "pos", NegativePrompt: "neg"},
-					ResponseMode: llmResponseModeTool,
+					ResponseMode: llmResponseModeJSON,
 				},
 			},
 		},

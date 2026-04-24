@@ -34,16 +34,22 @@ func TestParseTranslation(t *testing.T) {
 	}
 }
 
-func TestTranslateSystemPromptRequiresExplicitCharacterCount(t *testing.T) {
+func TestTranslateSystemPromptRequiresJSONOutput(t *testing.T) {
 	for _, expected := range []string{
+		"Your output must always be a valid `json` object.",
+		`"prompt": "shared scene-level English tags"`,
+		`"negative_prompt": "shared scene-level English negative tags"`,
+		`"characters": [`,
 		"Always infer the subject count from the request and express it explicitly in the global `prompt`",
 		"Even for a single clearly identified subject, you must still include an explicit count tag",
 		"The `characters` array length must match the actual number of distinct characters you inferred from the request.",
-		"Ensure the `characters` array length matches the inferred character count.",
 	} {
 		if !strings.Contains(translateSystemPrompt, expected) {
 			t.Fatalf("expected system prompt to contain %q", expected)
 		}
+	}
+	if strings.Contains(translateSystemPrompt, "tool calling") || strings.Contains(translateSystemPrompt, "translate_prompt") {
+		t.Fatalf("did not expect tool-calling instructions in system prompt")
 	}
 }
 
@@ -103,7 +109,7 @@ func TestParseTranslationRejectsEmptyCharacterNegativePrompt(t *testing.T) {
 	}
 }
 
-func TestTranslateSendsToolChoiceRequest(t *testing.T) {
+func TestTranslateSendsJSONOutputRequest(t *testing.T) {
 	var requestBody map[string]any
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
 		payload, err := io.ReadAll(req.Body)
@@ -114,7 +120,7 @@ func TestTranslateSendsToolChoiceRequest(t *testing.T) {
 			t.Fatalf("unmarshal request body: %v", err)
 		}
 
-		return newHTTPResponse(http.StatusOK, completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)), nil
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)), nil
 	})
 
 	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
@@ -144,70 +150,25 @@ func TestTranslateSendsToolChoiceRequest(t *testing.T) {
 		t.Fatalf("did not expect shape payload, got %q", content)
 	}
 
-	if _, ok := requestBody["response_format"]; ok {
-		t.Fatal("response_format should not be sent")
+	if _, ok := requestBody["tools"]; ok {
+		t.Fatalf("did not expect tools in request body: %#v", requestBody["tools"])
+	}
+	if _, ok := requestBody["tool_choice"]; ok {
+		t.Fatalf("did not expect tool_choice in request body: %#v", requestBody["tool_choice"])
 	}
 
-	tools, ok := requestBody["tools"].([]any)
-	if !ok || len(tools) != 1 {
-		t.Fatalf("expected one tool, got %#v", requestBody["tools"])
-	}
-
-	toolChoice, ok := requestBody["tool_choice"].(map[string]any)
+	responseFormat, ok := requestBody["response_format"].(map[string]any)
 	if !ok {
-		t.Fatalf("unexpected tool_choice: %#v", requestBody["tool_choice"])
+		t.Fatalf("unexpected response_format: %#v", requestBody["response_format"])
 	}
-	function, ok := toolChoice["function"].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected tool_choice.function: %#v", toolChoice["function"])
-	}
-	if function["name"] != translatePromptToolName {
-		t.Fatalf("unexpected tool choice name: %#v", function["name"])
-	}
-
-	if !ok || len(tools) != 1 {
-		t.Fatalf("expected one tool, got %#v", requestBody["tools"])
-	}
-	tool, ok := tools[0].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected tool: %#v", tools[0])
-	}
-	toolDef, ok := tool["function"].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected function tool: %#v", tool["function"])
-	}
-	parameters, ok := toolDef["parameters"].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected parameters: %#v", toolDef["parameters"])
-	}
-	properties, ok := parameters["properties"].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected properties: %#v", parameters["properties"])
-	}
-	for _, field := range []string{"prompt", "negative_prompt", "characters"} {
-		if _, ok := properties[field]; !ok {
-			t.Fatalf("expected %q in tool schema, got %#v", field, properties)
-		}
-	}
-	promptField, ok := properties["prompt"].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected prompt field schema: %#v", properties["prompt"])
-	}
-	if !strings.Contains(promptField["description"].(string), "1girl") {
-		t.Fatalf("expected count-tag guidance in prompt schema, got %#v", promptField["description"])
-	}
-	charactersField, ok := properties["characters"].(map[string]any)
-	if !ok {
-		t.Fatalf("unexpected characters field schema: %#v", properties["characters"])
-	}
-	if !strings.Contains(charactersField["description"].(string), "array length must match") {
-		t.Fatalf("expected character-count guidance in characters schema, got %#v", charactersField["description"])
+	if responseFormat["type"] != "json_object" {
+		t.Fatalf("unexpected response_format.type: %#v", responseFormat["type"])
 	}
 }
 
-func TestTranslateParsesToolCallResponse(t *testing.T) {
+func TestTranslateParsesAssistantJSONResponse(t *testing.T) {
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
-		return newHTTPResponse(http.StatusOK, completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[{"prompt":"girl, long hair","negative_prompt":"bad hands","position":"C3"}]}`)), nil
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[{"prompt":"girl, long hair","negative_prompt":"bad hands","position":"C3"}]}`)), nil
 	})
 
 	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
@@ -225,158 +186,9 @@ func TestTranslateParsesToolCallResponse(t *testing.T) {
 	}
 }
 
-func TestTranslateParsesSSEToolCallChunks(t *testing.T) {
+func TestTranslateParsesSSEAssistantJSONResponse(t *testing.T) {
 	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
 		body := strings.Join([]string{
-			sseChunk(t, map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": 0,
-						"function": map[string]any{
-							"name":      translatePromptToolName,
-							"arguments": "",
-						},
-					},
-				},
-			}),
-			"",
-			sseChunk(t, map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": 0,
-						"function": map[string]any{
-							"arguments": `{"prompt":"moonlit girl",`,
-						},
-					},
-				},
-			}),
-			"",
-			sseChunk(t, map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": 0,
-						"function": map[string]any{
-							"arguments": `"negative_prompt":"blurry","characters":[]`,
-						},
-					},
-				},
-			}),
-			"",
-			sseChunk(t, map[string]any{
-				"tool_calls": []any{
-					map[string]any{
-						"index": 0,
-						"function": map[string]any{
-							"arguments": "}",
-						},
-					},
-				},
-			}),
-			"",
-			"data: [DONE]",
-		}, "\n")
-
-		return newHTTPResponse(http.StatusOK, body), nil
-	})
-
-	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
-	if err != nil {
-		t.Fatalf("translate: %v", err)
-	}
-	if translation.Prompt != "moonlit girl" {
-		t.Fatalf("unexpected prompt: %q", translation.Prompt)
-	}
-	if translation.NegativePrompt != "blurry" {
-		t.Fatalf("unexpected negative prompt: %q", translation.NegativePrompt)
-	}
-}
-
-func TestTranslateFallsBackToAssistantJSON(t *testing.T) {
-	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
-		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)), nil
-	})
-
-	translation, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
-	if err != nil {
-		t.Fatalf("translate: %v", err)
-	}
-	if translation.Prompt != "moonlit girl" {
-		t.Fatalf("unexpected prompt: %q", translation.Prompt)
-	}
-	if translation.NegativePrompt != "blurry, lowres" {
-		t.Fatalf("unexpected negative prompt: %q", translation.NegativePrompt)
-	}
-}
-
-func TestTranslateLogsRequestAndTranslatedPrompts(t *testing.T) {
-	testCases := []struct {
-		name         string
-		responseBody string
-		expectParts  []string
-	}{
-		{
-			name:         "tool",
-			responseBody: completionWithToolCall(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[{"prompt":"girl, long hair","negative_prompt":"bad hands","position":"C3"}]}`),
-			expectParts:  []string{"negative_prompt=\"blurry, lowres\"", "characters=", "girl, long hair", "bad hands", "C3"},
-		},
-		{
-			name:         "plaintext",
-			responseBody: completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`),
-			expectParts:  []string{"negative_prompt=\"blurry, lowres\"", "characters=[]"},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			logBuffer := &bytes.Buffer{}
-			client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {
-				return newHTTPResponse(http.StatusOK, tc.responseBody), nil
-			})
-
-			_, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
-			if err != nil {
-				t.Fatalf("translate: %v", err)
-			}
-
-			logOutput := logBuffer.String()
-			if !strings.Contains(logOutput, "llm request started") {
-				t.Fatalf("expected request log, got %s", logOutput)
-			}
-			if !strings.Contains(logOutput, "base_url=https://api.openai.com/v1") {
-				t.Fatalf("expected base_url in request log, got %s", logOutput)
-			}
-			if !strings.Contains(logOutput, "model=gpt-4o-mini") {
-				t.Fatalf("expected model in request log, got %s", logOutput)
-			}
-			if !strings.Contains(logOutput, "attempt=1") {
-				t.Fatalf("expected attempt in request log, got %s", logOutput)
-			}
-			if !strings.Contains(logOutput, "llm translated") {
-				t.Fatalf("expected success log, got %s", logOutput)
-			}
-			if !strings.Contains(logOutput, "prompt=\"moonlit girl\"") {
-				t.Fatalf("expected prompt in success log, got %s", logOutput)
-			}
-			if !strings.Contains(logOutput, "negative_prompt=\"blurry, lowres\"") {
-				t.Fatalf("expected negative prompt in success log, got %s", logOutput)
-			}
-			for _, expected := range tc.expectParts {
-				if !strings.Contains(logOutput, expected) {
-					t.Fatalf("expected %q in success log, got %s", expected, logOutput)
-				}
-			}
-			if strings.Contains(logOutput, "response_mode=") {
-				t.Fatalf("did not expect response_mode in success log, got %s", logOutput)
-			}
-		})
-	}
-}
-
-func TestTranslateParsesSSEAssistantContentFallback(t *testing.T) {
-	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
-		body := strings.Join([]string{
-			sseChunk(t, map[string]any{"content": ""}),
-			"",
 			sseChunk(t, map[string]any{"content": "{\n"}),
 			"",
 			sseChunk(t, map[string]any{"content": `  "prompt":"moonlit girl",` + "\n"}),
@@ -403,27 +215,10 @@ func TestTranslateParsesSSEAssistantContentFallback(t *testing.T) {
 	}
 }
 
-func TestTranslateDoesNotFallbackWhenToolArgumentsInvalid(t *testing.T) {
+func TestTranslateRejectsInvalidAssistantJSON(t *testing.T) {
 	logBuffer := &bytes.Buffer{}
 	client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {
-		payload := map[string]any{
-			"choices": []any{
-				map[string]any{
-					"message": map[string]any{
-						"tool_calls": []any{
-							map[string]any{
-								"function": map[string]any{
-									"name":      translatePromptToolName,
-									"arguments": "{",
-								},
-							},
-						},
-						"content": `{"prompt":"fallback","negative_prompt":"fallback","characters":[]}`,
-					},
-				},
-			},
-		}
-		return newHTTPResponse(http.StatusOK, mustJSON(t, payload)), nil
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry","characters":[]}}`)), nil
 	})
 
 	_, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
@@ -434,11 +229,45 @@ func TestTranslateDoesNotFallbackWhenToolArgumentsInvalid(t *testing.T) {
 		t.Fatalf("expected parse llm json error, got %v", err)
 	}
 	logOutput := logBuffer.String()
-	if !strings.Contains(logOutput, "parse llm content failed") {
+	if !strings.Contains(logOutput, "parse llm json content failed") {
 		t.Fatalf("expected parse failure log, got %s", logOutput)
 	}
-	if !strings.Contains(logOutput, `assistant_content={`) {
+	if !strings.Contains(logOutput, `assistant_content="{\"prompt\":\"moonlit girl\"`) {
 		t.Fatalf("expected assistant_content log, got %s", logOutput)
+	}
+}
+
+func TestTranslateLogsRequestAndTranslatedPrompts(t *testing.T) {
+	logBuffer := &bytes.Buffer{}
+	client := newTestClient(t, slog.New(slog.NewTextHandler(logBuffer, nil)), func(req *http.Request) (*http.Response, error) {
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[{"prompt":"girl, long hair","negative_prompt":"bad hands","position":"C3"}]}`)), nil
+	})
+
+	_, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare)
+	if err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+
+	logOutput := logBuffer.String()
+	for _, expected := range []string{
+		"llm request started",
+		"base_url=https://api.openai.com/v1",
+		"model=gpt-4o-mini",
+		"attempt=1",
+		"llm translated",
+		`prompt="moonlit girl"`,
+		`negative_prompt="blurry, lowres"`,
+		"characters=",
+		"girl, long hair",
+		"bad hands",
+		"C3",
+	} {
+		if !strings.Contains(logOutput, expected) {
+			t.Fatalf("expected %q in logs, got %s", expected, logOutput)
+		}
+	}
+	if strings.Contains(logOutput, "response_mode=") {
+		t.Fatalf("did not expect response_mode in success log, got %s", logOutput)
 	}
 }
 
@@ -453,7 +282,7 @@ func TestTranslateLogsRawResponseOnUnsupportedFormat(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	logOutput := logBuffer.String()
-	if !strings.Contains(logOutput, "extract llm content failed") {
+	if !strings.Contains(logOutput, "extract llm json content failed") {
 		t.Fatalf("expected failure log, got %s", logOutput)
 	}
 	if !strings.Contains(logOutput, `raw_response="{\"unexpected\":\"payload\"}"`) {
@@ -492,27 +321,6 @@ func newTestClient(t *testing.T, logger *slog.Logger, transport roundTripFunc) *
 		httpClient: &http.Client{Transport: transport},
 		logger:     logger,
 	}
-}
-
-func completionWithToolCall(t *testing.T, arguments string) string {
-	t.Helper()
-
-	return mustJSON(t, map[string]any{
-		"choices": []any{
-			map[string]any{
-				"message": map[string]any{
-					"tool_calls": []any{
-						map[string]any{
-							"function": map[string]any{
-								"name":      translatePromptToolName,
-								"arguments": arguments,
-							},
-						},
-					},
-				},
-			},
-		},
-	})
 }
 
 func completionWithContent(t *testing.T, content string) string {
