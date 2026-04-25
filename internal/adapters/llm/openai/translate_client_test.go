@@ -182,6 +182,9 @@ func TestTranslateSendsJSONOutputRequest(t *testing.T) {
 	if _, ok := requestBody["tool_choice"]; ok {
 		t.Fatalf("did not expect tool_choice in request body: %#v", requestBody["tool_choice"])
 	}
+	if _, ok := requestBody["reasoning_effort"]; ok {
+		t.Fatalf("did not expect reasoning_effort without explicit config: %#v", requestBody["reasoning_effort"])
+	}
 
 	responseFormat, ok := requestBody["response_format"].(map[string]any)
 	if !ok {
@@ -189,6 +192,29 @@ func TestTranslateSendsJSONOutputRequest(t *testing.T) {
 	}
 	if responseFormat["type"] != "json_object" {
 		t.Fatalf("unexpected response_format.type: %#v", responseFormat["type"])
+	}
+}
+
+func TestTranslateSendsReasoningEffortWhenConfigured(t *testing.T) {
+	var requestBody map[string]any
+	client := newTestClient(t, nil, func(req *http.Request) (*http.Response, error) {
+		payload, err := io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if err := json.Unmarshal(payload, &requestBody); err != nil {
+			t.Fatalf("unmarshal request body: %v", err)
+		}
+
+		return newHTTPResponse(http.StatusOK, completionWithContent(t, `{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)), nil
+	})
+	client.cfg.ReasoningEffort = " custom-effort "
+
+	if _, err := client.Translate(context.Background(), "画一个月下的少女", draw.ShapeSquare); err != nil {
+		t.Fatalf("translate: %v", err)
+	}
+	if requestBody["reasoning_effort"] != "custom-effort" {
+		t.Fatalf("unexpected reasoning_effort: %#v", requestBody["reasoning_effort"])
 	}
 }
 

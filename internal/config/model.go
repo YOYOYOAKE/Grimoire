@@ -38,11 +38,12 @@ func (r Recovery) EnabledValue() bool {
 }
 
 type LLM struct {
-	BaseURL    string `yaml:"base_url"`
-	APIKey     string `yaml:"api_key"`
-	Model      string `yaml:"model"`
-	Proxy      string `yaml:"proxy"`
-	TimeoutSec int    `yaml:"timeout_sec"`
+	BaseURL         string `yaml:"base_url"`
+	APIKey          string `yaml:"api_key"`
+	Model           string `yaml:"model"`
+	ReasoningEffort string `yaml:"reasoning_effort"`
+	Proxy           string `yaml:"proxy"`
+	TimeoutSec      int    `yaml:"timeout_sec"`
 }
 
 type NAI struct {

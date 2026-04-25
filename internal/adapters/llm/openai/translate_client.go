@@ -116,6 +116,7 @@ func (c *TranslateClient) translate(ctx context.Context, prompt string, shape do
 			"type": "json_object",
 		},
 	}
+	addReasoningEffort(body, c.cfg.ReasoningEffort)
 
 	payload, err := json.Marshal(body)
 	if err != nil {

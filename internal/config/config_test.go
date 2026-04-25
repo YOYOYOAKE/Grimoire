@@ -36,8 +36,36 @@ nai:
 	if cfg.LLMs[0].TimeoutSec != 180 {
 		t.Fatalf("unexpected llm timeout: %d", cfg.LLMs[0].TimeoutSec)
 	}
+	if cfg.LLMs[0].ReasoningEffort != "" {
+		t.Fatalf("unexpected llm reasoning effort: %q", cfg.LLMs[0].ReasoningEffort)
+	}
 	if cfg.Conversation.RecentMessageLimit != 15 {
 		t.Fatalf("unexpected conversation recent message limit: %d", cfg.Conversation.RecentMessageLimit)
+	}
+}
+
+func TestLoadTrimsLLMReasoningEffort(t *testing.T) {
+	path := writeTestConfig(t, `
+telegram:
+  bot_token: "token"
+  admin_user_id: 1
+llms:
+  - base_url: "https://api.openai.com/v1"
+    api_key: "key"
+    model: "gpt-4o-mini"
+    reasoning_effort: " custom-effort "
+nai:
+  base_url: "https://image.novelai.net"
+  api_key: "key"
+  model: "nai-diffusion-4-5-full"
+`)
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LLMs[0].ReasoningEffort != "custom-effort" {
+		t.Fatalf("unexpected reasoning effort: %q", cfg.LLMs[0].ReasoningEffort)
 	}
 }
 
@@ -151,10 +179,13 @@ func TestEnsureDefaultConfigWritesTemplate(t *testing.T) {
 		t.Fatalf("read config file: %v", err)
 	}
 	content := string(data)
-	for _, section := range []string{"telegram:", "storage:", "conversation:", "recovery:", "llms:", "nai:"} {
+	for _, section := range []string{"telegram:", "storage:", "conversation:", "recovery:", "llms:", "reasoning_effort:", "nai:"} {
 		if !strings.Contains(content, section) {
 			t.Fatalf("missing section %q in template", section)
 		}
+	}
+	if !strings.Contains(content, "low, medium, high, xhigh") {
+		t.Fatalf("missing reasoning effort examples in template")
 	}
 }
 

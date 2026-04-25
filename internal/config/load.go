@@ -50,6 +50,7 @@ func normalize(cfg Config) Config {
 
 	for i, llm := range cfg.LLMs {
 		normalizeProvider(&llm.BaseURL, &llm.APIKey, &llm.Model, &llm.Proxy, true, &llm.TimeoutSec, 180)
+		llm.ReasoningEffort = strings.TrimSpace(llm.ReasoningEffort)
 		cfg.LLMs[i] = llm
 	}
 
@@ -136,6 +137,8 @@ llms:
   - base_url: "https://api.openai.com/v1"
     api_key: ""
     model: "gpt-4o-mini"
+    # Optional examples: low, medium, high, xhigh. Custom provider values are also allowed.
+    reasoning_effort: ""
     proxy: ""
     timeout_sec: 180
 

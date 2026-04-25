@@ -74,6 +74,7 @@ func (c *ConversationClient) Converse(ctx context.Context, input conversation.Co
 			"type": "json_object",
 		},
 	}
+	addReasoningEffort(body, c.cfg.ReasoningEffort)
 
 	payload, err := json.Marshal(body)
 	if err != nil {
