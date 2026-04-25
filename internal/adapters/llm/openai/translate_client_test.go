@@ -18,6 +18,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
+const translatePromptBaseNegativeSequence = "bad_anatomy, bad_hands, malformed_hands, extra_fingers, missing_fingers, fused_fingers, malformed_limbs, extra_limbs, missing_limbs, deformed, distorted, disfigured, bad_eyes, poorly_drawn_eyes, asymmetrical_eyes, bad_proportions, cropped, out_of_frame, blurry, worst_quality, bad_quality, very_displeasing, jpeg_artifacts, watermark, signature, text, logo"
+
 func TestParseTranslation(t *testing.T) {
 	translation, err := parseTranslation(`{"prompt":"moonlit girl","negative_prompt":"blurry, lowres","characters":[]}`)
 	if err != nil {
@@ -38,10 +40,34 @@ func TestTranslateSystemPromptRequiresJSONOutput(t *testing.T) {
 	for _, expected := range []string{
 		"Your output must always be a valid `json` object.",
 		`"prompt": "shared scene-level English tags"`,
-		`"negative_prompt": "shared scene-level English negative tags"`,
+		`"negative_prompt": "shared/global English negative tags"`,
 		`"characters": [`,
 		"Always infer the subject count from the request and express it explicitly in the global `prompt`",
 		"Even for a single clearly identified subject, you must still include an explicit count tag",
+		"1.2::masterpiece::, best_quality, highres, extremely_detailed_CG, perfect_lighting, 8k_wallpaper",
+		translatePromptBaseNegativeSequence,
+		"The fixed base negative tag sequence is a mandatory generation-level quality baseline",
+		"Keep the base negative tag sequence in this order, with underscores replacing spaces.",
+		"The shared `negative_prompt` applies globally to the whole image and every character.",
+		"Negative prompts are not better just because they contain more tags.",
+		"Do not add long generic negative tag lists beyond the fixed base sequence.",
+		"Each character `negative_prompt` applies only to that character.",
+		"if a character `prompt` includes `boy`, that character's `negative_prompt` should include `girl`",
+		"Avoid repeating tags from the base negative tag sequence in character `negative_prompt`.",
+		"Keep each character `negative_prompt` as short as possible while still useful.",
+		"single concise character-level drift negative such as `off_model`",
+		"boy, male, wrong_outfit",
+		"Ensure the base negative tag sequence appears in the shared `negative_prompt`.",
+		"Ensure character `negative_prompt` values avoid unnecessary duplication of tags from the base negative tag sequence.",
+		"Ensure negative prompts stay minimal and targeted; do not add extra negative tags just to make them longer.",
+		"NovelAI prompt weights represent influence strength or model focus",
+		"heavy_rain, 1.3::rain::",
+		"-1::monochrome::",
+		"Order tags as: subject count/subject type, character/series, appearance, clothing, pose/action, composition, scene, lighting/atmosphere, style, quality tags, other restrictions.",
+		"the global `prompt` order is: subject count/subject type, composition, scene, lighting/atmosphere, style, quality tags, other restrictions.",
+		"each character `prompt` order is: character/series, appearance, clothing, pose/action.",
+		"Put the most important tags as early as possible within the correct order group.",
+		"Ensure the required quality tag sequence appears exactly once in the global `prompt`.",
 		"The `characters` array length must match the actual number of distinct characters you inferred from the request.",
 	} {
 		if !strings.Contains(translateSystemPrompt, expected) {
